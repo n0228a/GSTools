@@ -53,6 +53,14 @@ Truncated Power Law Covariance Models
    TPLExponential
    TPLStable
    TPLSimple
+
+Collocated Cokriging Models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autosummary::
+   :toctree:
+
+   MarkovModel1
 """
 
 from gstools.covmodel.base import CovModel, SumModel
@@ -78,6 +86,7 @@ from gstools.covmodel.tpl_models import (
     TPLSimple,
     TPLStable,
 )
+from gstools.covmodel.models import MarkovModel1
 
 __all__ = [
     "CovModel",
@@ -100,4 +109,5 @@ __all__ = [
     "TPLExponential",
     "TPLStable",
     "TPLSimple",
+    "MarkovModel1",
 ]
