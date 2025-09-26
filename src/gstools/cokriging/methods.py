@@ -1,239 +1,264 @@
 """
-GStools cokriging methods.
+GStools subpackage providing cokriging methods.
 
 .. currentmodule:: gstools.cokriging.methods
 
-Cokriging Methods
-^^^^^^^^^^^^^^^^^
-Methods for multivariate spatial interpolation
+The following classes are provided
 
 .. autosummary::
-   SimpleCollocatedCoKrige
-
-----
+   SCCK
 """
 
 import numpy as np
-from gstools.cokriging.base import CoKrige
+from gstools.krige.base import Krige
+
+__all__ = ["SCCK"]
 
 
-class SimpleCollocatedCoKrige(CoKrige):
+class SCCK(Krige):
     """
-    Simple Collocated CoKriging (SCCK).
+    Simple Collocated Cokriging using Markov Model I (MM1) algorithm.
 
-    SCCK extends simple kriging by incorporating a secondary variable that is
-    exhaustively sampled. It uses Markov Model I to simplify the cross-covariance
-    structure, assuming the secondary variable has the same spatial structure
-    as the primary variable.
+    SCCK extends simple kriging by incorporating secondary variable information
+    at estimation locations. The MM1 algorithm assumes a Markov-type
+    coregionalization model where ρ_yz(h) = ρ_yz(0)ρ_z(h), enabling efficient
+    reuse of simple kriging computations with collocated adjustments.
+
+    The estimator follows the elegant form:
+    Z_SCCK(x) = Z_SK(x) × (1 - k×λ_Y0) + λ_Y0 × Y(x)
+
+    where k is the cross-covariance ratio and λ_Y0 is the collocated weight.
 
     Parameters
     ----------
-    pos_z : :class:`list`
-        tuple, containing the given primary variable positions (x, [y, z])
-    val_z : :class:`numpy.ndarray`
-        the values of the primary variable conditions
-    pos_y : :class:`list`
-        tuple, containing the given secondary variable positions (x, [y, z])
-    val_y : :class:`numpy.ndarray`
-        the values of the secondary variable conditions
-    model : :any:`MarkovModel1`
-        Markov Model 1 for cross-covariance modeling
-    mm_type : :class:`str`, optional
-        Markov model type. Currently only "MM1" supported. Default: "MM1"
+    model : :any:`CovModel`
+        Covariance model for the primary variable.
+    cond_pos : :class:`list`
+        tuple, containing the given condition positions (x, [y, z])
+    cond_val : :class:`numpy.ndarray`
+        the values of the conditions (nan values will be ignored)
+    cross_corr : :class:`float`
+        Cross-correlation coefficient between primary and secondary variables
+        at zero lag. Must be in [-1, 1].
+    secondary_var : :class:`float`
+        Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        mean value used for simple kriging. Default: 0.0
-    **kwargs
-        Additional arguments passed to CoKrige base class
+        Mean value for simple kriging. Default: 0.0
+    normalizer : :any:`None` or :any:`Normalizer`, optional
+        Normalizer to be applied to the input data to gain normality.
+        The default is None.
+    trend : :any:`None` or :class:`float` or :any:`callable`, optional
+        A callable trend function. Should have the signature: f(x, [y, z, ...])
+        This is used for detrended kriging, where the trend is subtracted
+        from the conditions before kriging is applied.
+        If no normalizer is applied, this behaves equal to 'mean'.
+        The default is None.
+    exact : :class:`bool`, optional
+        Whether the interpolator should reproduce the exact input values.
+        If `False`, `cond_err` is interpreted as measurement error
+        at the conditioning points and the result will be more smooth.
+        Default: False
+    cond_err : :class:`str`, :class:`float` or :class:`list`, optional
+        The measurement error at the conditioning points.
+        Either "nugget" to apply the model-nugget, a single value applied to
+        all points or an array with individual values for each point.
+        The measurement error has to be <= nugget.
+        The "exact=True" variant only works with "cond_err='nugget'".
+        Default: "nugget"
+    pseudo_inv : :class:`bool`, optional
+        Whether the kriging system is solved with the pseudo inverted
+        kriging matrix. If `True`, this leads to more numerical stability
+        and redundant points are averaged. But it can take more time.
+        Default: True
+    pseudo_inv_type : :class:`str` or :any:`callable`, optional
+        Here you can select the algorithm to compute the pseudo-inverse matrix:
 
-    Notes
-    -----
-    The SCCK system of equations is:
-    Sum_alpha lambda_Z,alpha rho_z(u_alpha - u_beta) + lambda_Y0 rho_yz(u_beta - u_0) = rho_z(u_beta - u_0)
-    Sum_alpha lambda_Z,alpha rho_yz(u_alpha - u_0) + lambda_Y0 = rho_yz(0)
+            * `"pinv"`: use `pinv` from `scipy` which uses `SVD`
+            * `"pinvh"`: use `pinvh` from `scipy` which uses eigen-values
+
+        If you want to use another routine to invert the kriging matrix,
+        you can pass a callable which takes a matrix and returns the inverse.
+        Default: `"pinv"`
+    fit_normalizer : :class:`bool`, optional
+        Whether to fit the data-normalizer to the given conditioning data.
+        Default: False
+    fit_variogram : :class:`bool`, optional
+        Whether to fit the given variogram model to the data.
+        Default: False
+
+    References
+    ----------
+    .. [Samson2020] Samson, M., & Deutsch, C. V. (2020). Collocated Cokriging.
+       In J. L. Deutsch (Ed.), Geostatistics Lessons. Retrieved from
+       http://geostatisticslessons.com/lessons/collocatedcokriging
+    .. [Wackernagel2003] Wackernagel, H. Multivariate Geostatistics,
+       Springer, Berlin, 2003.
     """
 
     def __init__(
         self,
-        pos_z,
-        val_z,
-        pos_y,
-        val_y,
         model,
-        mm_type="MM1",
+        cond_pos,
+        cond_val,
+        cross_corr,
+        secondary_var,
         mean=0.0,
-        **kwargs
+        normalizer=None,
+        trend=None,
+        exact=False,
+        cond_err="nugget",
+        pseudo_inv=True,
+        pseudo_inv_type="pinv",
+        fit_normalizer=False,
+        fit_variogram=False,
     ):
-        from gstools.covmodel.models import MarkovModel1
+        self.cross_corr = float(cross_corr)
+        if not -1.0 <= self.cross_corr <= 1.0:
+            raise ValueError("cross_corr must be in [-1, 1]")
 
-        # validate model type
-        if not isinstance(model, MarkovModel1):
-            raise TypeError("model must be a MarkovModel1 instance")
+        self.secondary_var = float(secondary_var)
+        if self.secondary_var <= 0:
+            raise ValueError("secondary_var must be positive")
 
-        if mm_type != "MM1":
-            raise ValueError("Currently only MM1 supported")
-
-        # validate and store secondary data
-        pos_y, val_y = self._validate_secondary_data(pos_y, val_y)
-        self._pos_y = pos_y
-        self._val_y = val_y
-        self._mm_model = model
-        self._mm_type = mm_type
-
-        # initialize CoKrige base class with primary data
+        # Initialize as Simple Kriging (unbiased=False)
         super().__init__(
-            model=model.base_model,  # use base model for primary variable
-            cond_pos=pos_z,
-            cond_val=val_z,
+            model=model,
+            cond_pos=cond_pos,
+            cond_val=cond_val,
             mean=mean,
-            **kwargs
+            unbiased=False,  # Simple kriging
+            normalizer=normalizer,
+            trend=trend,
+            exact=exact,
+            cond_err=cond_err,
+            pseudo_inv=pseudo_inv,
+            pseudo_inv_type=pseudo_inv_type,
+            fit_normalizer=fit_normalizer,
+            fit_variogram=fit_variogram,
         )
 
-    @property
-    def pos_y(self):
-        """:class:`list`: The position tuple of the secondary conditions."""
-        return self._pos_y
-
-    @property
-    def val_y(self):
-        """:class:`list`: The values of the secondary conditions."""
-        return self._val_y
-
-    @property
-    def mm_model(self):
-        """:any:`MarkovModel1`: The Markov Model 1 for cross-covariance."""
-        return self._mm_model
-
-    @property
-    def krige_size(self):
-        """:class:`int`: Size of the SCCK kriging system."""
-        # For compatibility with base class, report standard size
-        # SCCK uses a custom solving approach
-        return self.cond_no
-
-    def _get_krige_mat(self):
+    def __call__(self, pos=None, secondary_data=None, **kwargs):
         """
-        SCCK requires position-dependent matrices, so this method
-        returns the base primary-primary correlation matrix that will
-        be used as a building block in the per-target system construction.
-        """
-        n = self.cond_no
-        primary_dists = self._get_dists(self._krige_pos)
-        res = self.mm_model.base_model.correlation(primary_dists)
-        res[np.diag_indices(n)] += self.cond_err
-        return self._inv(res)
+        Estimate using SCCK with MM1 algorithm.
 
-    def _get_krige_vecs(self, pos, chunk_slice=(0, None), ext_drift=None, only_mean=False):
-        """
-        SCCK uses custom matrix solving, so this method is not used
-        in the standard way. Kept for interface compatibility.
-        """
-        chunk_size = len(range(*chunk_slice))
-        n = self.cond_no
-        res = np.empty((n, chunk_size), dtype=np.double)
-        
-        if only_mean:
-            res[:n, :] = 0.0
-        else:
-            target_dists = self._get_dists(self._krige_pos, pos, chunk_slice)
-            res[:n, :] = self.mm_model.base_model.correlation(target_dists)
-        
-        return res
-
-    def __call__(self, pos, secondary_values=None, chunk_size=None, only_mean=False, return_var=False, mesh_type="unstructured"):
-        """
-        Evaluate SCCK at given positions.
-        
         Parameters
         ----------
-        pos : array-like
-            Target positions for estimation
-        secondary_values : array-like
-            Values of secondary variable at target positions. 
-            Required for collocated cokriging.
-        
+        pos : :class:`list`
+            tuple, containing the given positions (x, [y, z])
+        secondary_data : :class:`numpy.ndarray`
+            Secondary variable values at estimation positions.
+        **kwargs
+            Standard Krige parameters (return_var, chunk_size, only_mean, etc.)
+
         Returns
         -------
-        estimates : numpy.ndarray
-            SCCK estimates at target locations
-        variances : numpy.ndarray, optional
-            Kriging variances (if return_var=True)
-        
-        Notes
-        -----
-        SCCK requires solving a position-dependent system for each target
-        location due to cross-correlation terms in the system matrix.
+        field : :class:`numpy.ndarray`
+            SCCK estimated field values.
+        krige_var : :class:`numpy.ndarray`, optional
+            SCCK estimation variance (if return_var=True).
         """
-        pos = self.model.isometrize(pos)
-        if pos.ndim == 1:
-            pos = pos.reshape(-1, 1)
-        
-        n_targets = pos.shape[1]
-        n_cond = self.cond_no
-        
-        # Validate secondary values
-        if secondary_values is None:
-            raise ValueError("secondary_values must be provided for collocated cokriging. "
-                           "These are the secondary variable values at target locations.")
-        
-        secondary_values = np.asarray(secondary_values)
-        if len(secondary_values) != n_targets:
-            raise ValueError(f"secondary_values length ({len(secondary_values)}) must match "
-                           f"number of target positions ({n_targets})")
-        
-        # Get base correlation matrix components
-        K_zz_inv = self._get_krige_mat()
-        K_zz = np.linalg.inv(K_zz_inv)
-        
-        # Prepare result arrays
-        result = np.zeros(n_targets)
-        variance = np.zeros(n_targets) if return_var else None
-        
-        # Solve SCCK system for each target position
-        for i in range(n_targets):
-            target_pos = pos[:, i:i+1]
-            y_at_target = secondary_values[i]
-            
-            # Build SCCK system matrix for this target
-            A = np.zeros((n_cond + 1, n_cond + 1))
-            
-            # Upper-left: primary-primary correlations
-            A[:n_cond, :n_cond] = K_zz
-            
-            # Cross-correlation terms (position-dependent)
-            dists_to_target = self._get_dists(self._krige_pos, target_pos, (0, 1))
-            cross_corr_to_target = self.mm_model.cross_correlogram(dists_to_target.flatten())
-            
-            A[:n_cond, n_cond] = cross_corr_to_target  # Right column
-            A[n_cond, :n_cond] = cross_corr_to_target  # Bottom row
-            A[n_cond, n_cond] = 1.0  # Constraint coefficient
-            
-            # Build RHS vector
-            b = np.zeros(n_cond + 1)
-            b[:n_cond] = self.mm_model.base_model.correlation(dists_to_target.flatten())
-            b[n_cond] = self.mm_model.cross_corr
-            
-            # Solve SCCK system
-            try:
-                weights = np.linalg.solve(A, b)
-                
-                # SCCK estimate: Z*(u_0) = Sum lambda_alpha Z(u_alpha) + lambda_Y0 Y(u_0)
-                estimate = (weights[:n_cond] @ (self.cond_val - self.mean) + 
-                           weights[n_cond] * (y_at_target - np.mean(self.val_y)) + 
-                           self.mean)
-                
-                result[i] = estimate
-                
-                # Kriging variance
-                if return_var:
-                    var_reduction = weights @ b
-                    variance[i] = max(0.0, self.model.var * (1.0 - var_reduction))
-                    
-            except np.linalg.LinAlgError:
-                # Fallback to mean if system is singular
-                result[i] = self.mean
-                if return_var:
-                    variance[i] = self.model.var
-        
+        if secondary_data is None:
+            raise ValueError("secondary_data required for SCCK")
+
+        # Store secondary data for use in _summateed
+        self._secondary_data = np.asarray(secondary_data, dtype=np.double)
+
+        try:
+            return super().__call__(pos=pos, **kwargs)
+        finally:
+            # Clean up temporary attribute
+            if hasattr(self, '_secondary_data'):
+                delattr(self, '_secondary_data')
+
+    def _summate(self, field, krige_var, c_slice, k_vec, return_var):
+        """Override to implement MM1 SCCK estimator."""
+        # Handle trivial case where cross-correlation is zero
+        if abs(self.cross_corr) < 1e-15:
+            return super()._summate(field, krige_var, c_slice, k_vec, return_var)
+
+        # Import at function level to avoid circular imports
+        from gstools.krige.base import _calc_field_krige_and_variance
+
+        # ALWAYS compute both SK field and variance (SCCK mathematical requirement)
+        sk_field_chunk, sk_var_chunk = _calc_field_krige_and_variance(
+            self._krige_mat, k_vec, self._krige_cond
+        )
+        print(sk_var_chunk)
+        # Apply MM1 transformation (single, consistent algorithm)
+        secondary_chunk = self._secondary_data[c_slice]
+        k = self._compute_k()
+        collocated_weights = self._compute_collocated_weight(sk_var_chunk, k)
+        print(collocated_weights)
+        # MM1 Estimator: Z_SCCK = Z_SK * (1 - k*λ_Y0) + λ_Y0 * Y
+        field[c_slice] = (
+            sk_field_chunk * (1 - k * collocated_weights) +
+            collocated_weights * secondary_chunk
+        )
+
+        # Handle variance based on user request (harmonious with base class)
         if return_var:
-            return result, variance
-        return result
+            scck_variances = self._compute_scck_variance(sk_var_chunk, k)
+            krige_var[c_slice] = scck_variances
+        # If return_var=False, krige_var is None and we don't touch it
+
+    def _compute_k(self):
+        """Compute cross-covariance ratio k = C_YZ(0)/C_Z(0)."""
+        cross_cov_zero = self.cross_corr * np.sqrt(
+            self.model.sill * self.secondary_var
+        )
+        return cross_cov_zero / self.model.sill
+
+    def _compute_collocated_weight(self, sk_variance, k):
+        """
+        Compute collocated weight using MM1 formula.
+
+        Parameters
+        ----------
+        sk_variance : :class:`float` or :class:`numpy.ndarray`
+            Simple kriging variance.
+        k : :class:`float`
+            Cross-covariance ratio.
+
+        Returns
+        -------
+        :class:`float` or :class:`numpy.ndarray`
+            Collocated weight (same shape as sk_variance).
+        """
+        numerator = k * (self.model.sill - sk_variance)
+        denominator = (
+            self.secondary_var - k**2 * (self.model.sill - sk_variance)
+        )
+        # Handle numerical issues
+        return np.where(
+            np.abs(denominator) < 1e-15,
+            0.0,
+            numerator / denominator
+        )
+
+    def _compute_scck_variance(self, sk_variance, k):
+        """
+        Compute SCCK variance using MM1 formula.
+
+        Note: MM1 SCCK is known to suffer from variance inflation issues
+        in geostatistics literature. The variance may be larger than
+        simple kriging variance due to the simplified covariance structure.
+        For better variance estimation, consider Intrinsic Collocated
+        Cokriging (ICCK) with MM2 model.
+
+        Parameters
+        ----------
+        sk_variance : :class:`float` or :class:`numpy.ndarray`
+            Simple kriging variance.
+        k : :class:`float`
+            Cross-covariance ratio.
+
+        Returns
+        -------
+        :class:`float` or :class:`numpy.ndarray`
+            SCCK variance (same shape as sk_variance).
+        """
+        collocated_weights = self._compute_collocated_weight(sk_variance, k)
+        scck_variance = sk_variance * (1 - collocated_weights * k)
+
+        # Note: Due to MM1 limitations, variance may actually be larger than SK
+        return np.maximum(0.0, scck_variance)

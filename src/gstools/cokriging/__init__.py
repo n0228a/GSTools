@@ -1,20 +1,17 @@
 """
-GStools subpackage providing cokriging functionality.
+GStools subpackage providing cokriging.
 
 .. currentmodule:: gstools.cokriging
 
 Cokriging Classes
 ^^^^^^^^^^^^^^^^^
-Classes for multivariate spatial interpolation
 
 .. autosummary::
-   SimpleCollocatedCoKrige
+   :toctree:
 
-----
+   SCCK
 """
 
-from gstools.cokriging.methods import SimpleCollocatedCoKrige
+from gstools.cokriging.methods import SCCK
 
-__all__ = [
-    "SimpleCollocatedCoKrige",
-]
+__all__ = ["SCCK"]
