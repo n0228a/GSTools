@@ -47,7 +47,6 @@ __all__ = [
     "HyperSpherical",
     "SuperSpherical",
     "JBessel",
-    "MarkovModel1",
 ]
 
 
@@ -1027,63 +1026,3 @@ class JBessel(CovModel):
             * (1.0 - (kk * self.len_rescaled) ** 2) ** (self.nu - self.dim / 2)
         )
         return res
-
-
-class MarkovModel1(CovModel):
-    """
-    Markov Model I for collocated cokriging.
-
-    This model implements Markov Model 1 (MM1) for cross-covariance modeling
-    in collocated cokriging. MM1 assumes that the secondary variable has the
-    same spatial structure (correlogram) as the primary variable.
-
-    The cross-correlogram is given by:
-        ρ_yz(h) = ρ_yz(0) * ρ_z(h)
-
-    where:
-    - ρ_yz(h) is the cross-correlogram
-    - ρ_yz(0) is the collocated correlation coefficient
-    - ρ_z(h) is the primary variable's correlogram
-
-    Parameters
-    ----------
-    base_model : CovModel
-        Base covariance model for the primary variable
-    cross_corr : float
-        Cross-correlation coefficient ρ_yz(0) at lag 0. Must be in [-1, 1]
-    """
-
-    def __init__(self, base_model, cross_corr, **kwargs):
-        if not isinstance(base_model, CovModel):
-            raise TypeError("base_model must be a CovModel instance")
-
-        if not -1 <= cross_corr <= 1:
-            raise ValueError("cross_corr must be in [-1, 1]")
-
-        self.base_model = base_model
-        self.cross_corr = float(cross_corr)
-
-        # Initialize with base model parameters
-        super().__init__(
-            dim=base_model.dim,
-            var=base_model.var,
-            len_scale=base_model.len_scale,
-            nugget=base_model.nugget,
-            anis=base_model.anis,
-            angles=base_model.angles,
-            **kwargs
-        )
-
-    def cor(self, h):
-        """Primary variable correlogram (same as base model)."""
-        return self.base_model.correlation(h)
-
-    def cross_correlogram(self, h):
-        """Cross-correlogram ρ_yz(h) = ρ_yz(0) * ρ_z(h)."""
-        return self.cross_corr * self.base_model.correlation(h)
-
-    def __repr__(self):
-        return (
-            f"MarkovModel1(base={self.base_model.name}, "
-            f"cross_corr={self.cross_corr:.3f})"
-        )
