@@ -183,12 +183,10 @@ class SCCK(Krige):
         sk_field_chunk, sk_var_chunk = _calc_field_krige_and_variance(
             self._krige_mat, k_vec, self._krige_cond
         )
-        print(sk_var_chunk)
         # Apply MM1 transformation (single, consistent algorithm)
         secondary_chunk = self._secondary_data[c_slice]
         k = self._compute_k()
         collocated_weights = self._compute_collocated_weight(sk_var_chunk, k)
-        print(collocated_weights)
         # MM1 Estimator: Z_SCCK = Z_SK * (1 - k*λ_Y0) + λ_Y0 * Y
         field[c_slice] = (
             sk_field_chunk * (1 - k * collocated_weights) +
