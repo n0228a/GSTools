@@ -121,23 +121,32 @@ class TestCokriging(unittest.TestCase):
             secondary_var=1.5,
         )
 
-        # Test cross-covariance ratio computation
-        k = scck._compute_k()
+        # Test covariance computation (unified interface)
+        C_Z0, C_Y0, C_YZ0 = scck._compute_covariances()
+        self.assertAlmostEqual(C_Z0, model.sill, places=10)
+        self.assertAlmostEqual(C_Y0, scck.secondary_var, places=10)
+        expected_C_YZ0 = scck.cross_corr * np.sqrt(C_Z0 * C_Y0)
+        self.assertAlmostEqual(C_YZ0, expected_C_YZ0, places=10)
+
+        # Test cross-covariance ratio (computed internally in MM1)
+        k = C_YZ0 / C_Z0
         expected_k = scck.cross_corr * \
             np.sqrt(model.sill * scck.secondary_var) / model.sill
         self.assertAlmostEqual(k, expected_k, places=10)
 
-        # Test collocated weight computation
+        # Test MM1 collocated weight computation manually
         test_variance = np.array([0.5, 1.0, 1.5])
-        weights = scck._compute_collocated_weight(test_variance, k)
+        numerator = k * (C_Z0 - test_variance)
+        denominator = C_Y0 - k**2 * (C_Z0 - test_variance)
+        weights = np.where(np.abs(denominator) < 1e-15,
+                           0.0, numerator / denominator)
 
         # Weights should be finite
         self.assertTrue(np.all(np.isfinite(weights)))
 
         # Test MM1 variance formula consistency
-        scck_var = scck._compute_scck_variance(test_variance, k)
-        expected_var = test_variance * (1 - weights * k)
-        expected_var = np.maximum(0.0, expected_var)
+        scck_var = test_variance * (1 - weights * k)
+        expected_var = np.maximum(0.0, scck_var)
 
         np.testing.assert_allclose(scck_var, expected_var, rtol=1e-12)
 

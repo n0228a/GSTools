@@ -114,8 +114,8 @@ ax1.legend()
 ax1.grid(True, alpha=0.3)
 
 # plot kriging results
-ax2.plot(gridx, sk_field, "r-", linewidth=2, label="Simple Kriging")
-ax2.plot(gridx, scck_field, "b-", linewidth=2,
+ax2.plot(gridx, sk_var, "r-", linewidth=2, label="Simple Kriging")
+ax2.plot(gridx, scck_var, "b-", linewidth=2,
          label="Simple Collocated Cokriging")
 ax2.scatter(cond_pos, cond_val, color="k", s=60, zorder=10, label="Conditions")
 ax2.axvspan(8, 12, alpha=0.2, color="orange", label="Gap region")
