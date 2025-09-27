@@ -10,8 +10,9 @@ Cokriging Classes
    :toctree:
 
    SCCK
+   ICCK
 """
 
-from gstools.cokriging.methods import SCCK
+from gstools.cokriging.methods import SCCK, ICCK
 
-__all__ = ["SCCK"]
+__all__ = ["SCCK", "ICCK"]
