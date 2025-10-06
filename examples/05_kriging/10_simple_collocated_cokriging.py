@@ -39,7 +39,7 @@ cond_pos = np.array([0.5, 2.1, 3.8, 6.2, 13.5])
 cond_val = np.array([5.8, 6.2, 6.8, 6.1, 6.4])
 
 # secondary data - dense sampling with strong spatial correlation
-sec_pos = np.linspace(0, 15, 31)
+sec_pos = np.linspace(0, 15, 51)
 
 # create secondary data correlated with primary pattern
 primary_trend = np.interp(sec_pos, cond_pos, cond_val)
@@ -47,10 +47,11 @@ primary_trend = np.interp(sec_pos, cond_pos, cond_val)
 # add spatial feature in gap region (x=8-12) to demonstrate cokriging benefit
 gap_feature = 0.4 * np.exp(-((sec_pos - 10.0) / 2.0)**2)
 gap_feature2 = - 0.35 * np.exp(-((sec_pos - 4.0) / 2.0)**2)
+gap_feature3 = 0.4 * np.exp(-((sec_pos - 13.0) / 2.0)**2)
 
 # secondary = 0.85 * primary_pattern + gap_feature + small_noise
-sec_val = 0.99 * primary_trend + gap_feature + gap_feature2 + \
-    0.06 * np.random.randn(len(sec_pos))
+sec_val = 0.99 * primary_trend + gap_feature + gap_feature2 + gap_feature3 + \
+    0.01 * np.random.randn(len(sec_pos))
 
 
 # estimation grid

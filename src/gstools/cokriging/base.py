@@ -222,7 +222,11 @@ class CollocatedCokriging(Krige):
             # ICCK variance: σ²_ICCK = (1-ρ₀²) × σ²_SK
             if user_return_var:
                 C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
-                rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
+                # Compute ρ₀² with division-by-zero protection
+                if C_Y0 * C_Z0 < 1e-15:
+                    rho_squared = 0.0
+                else:
+                    rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
                 # sk_var is already in actual variance format (σ²)
                 icck_var = (1.0 - rho_squared) * sk_var
                 icck_var = np.maximum(0.0, icck_var)
@@ -244,7 +248,7 @@ class CollocatedCokriging(Krige):
         # NOTE: sk_var from super().__call__() is already actual variance σ²
         # MM1 collocated weights: λ_Y0 = (k × σ²_SK) / (C_Y0 - k² × σ²_SK)
         numerator = k * sk_var
-        denominator = C_Y0 - (k**2) * sk_var
+        denominator = C_Y0 - (k**2) * (C_Z0 - sk_var)
         collocated_weights = np.where(
             np.abs(denominator) < 1e-15,
             0.0,

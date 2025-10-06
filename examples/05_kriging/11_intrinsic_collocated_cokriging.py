@@ -138,7 +138,11 @@ print(f"ICCK variance range: [{np.min(icck_var):.3f}, {np.max(icck_var):.3f}]")
 
 # Theoretical correlation coefficient
 C_Z0, C_Y0, C_YZ0 = icck._compute_covariances()
-rho_squared = icck._compute_correlation_coeff_squared(C_Z0, C_Y0, C_YZ0)
+# Compute squared correlation coefficient ρ₀²
+if C_Y0 * C_Z0 < 1e-15:
+    rho_squared = 0.0
+else:
+    rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
 print(f"Theoretical ρ₀²: {rho_squared:.3f}")
 print(f"ICCK variance reduction factor: {1 - rho_squared:.3f}")
 
