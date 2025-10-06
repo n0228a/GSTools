@@ -1,9 +1,9 @@
 """
-GStools subpackage providing base collocated cokriging functionality.
+GStools subpackage providing collocated cokriging.
 
 .. currentmodule:: gstools.cokriging.base
 
-The following base classes are provided
+The following classes are provided
 
 .. autosummary::
    CollocatedCokriging
@@ -17,18 +17,12 @@ __all__ = ["CollocatedCokriging"]
 
 class CollocatedCokriging(Krige):
     """
-    Base class for collocated cokriging methods.
+    Collocated cokriging.
 
-    This class provides unified functionality for both Simple Collocated Cokriging (SCCK)
-    and Intrinsic Collocated Cokriging (ICCK), following the same pattern as the kriging
-    module where different methods are parameter variations of a common base.
-
-    The class handles all common functionality:
-    - Input validation for cross-correlation and secondary variance
-    - Covariance calculations (C_Z0, C_Y0, C_YZ0)
-    - Secondary data management
-    - Edge case handling (zero correlation, perfect correlation)
-    - Variance post-processing for proper ICCK variance estimation
+    Collocated cokriging uses secondary data at the estimation location
+    to improve the primary variable estimate. This implementation supports
+    both Simple Collocated Cokriging (SCCK) using the MM1 algorithm
+    and Intrinsic Collocated Cokriging (ICCK) using proportional covariances.
 
     Parameters
     ----------
@@ -51,6 +45,8 @@ class CollocatedCokriging(Krige):
         values of secondary variable at primary locations (only for ICCK)
     mean : :class:`float`, optional
         Mean value for simple kriging. Default: 0.0
+    secondary_mean : :class:`float`, optional
+        Mean value of the secondary variable. Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.
@@ -113,6 +109,7 @@ class CollocatedCokriging(Krige):
         secondary_cond_pos=None,
         secondary_cond_val=None,
         mean=0.0,
+        secondary_mean=0.0,
         normalizer=None,
         trend=None,
         exact=False,
@@ -136,6 +133,8 @@ class CollocatedCokriging(Krige):
         self.secondary_var = float(secondary_var)
         if self.secondary_var <= 0:
             raise ValueError("secondary_var must be positive")
+
+        self.secondary_mean = float(secondary_mean)
 
         # Handle secondary conditioning data (required for ICCK)
         if algorithm == "intrinsic":
@@ -176,269 +175,141 @@ class CollocatedCokriging(Krige):
 
     def __call__(self, pos=None, secondary_data=None, **kwargs):
         """
-        Estimate using collocated cokriging.
+        Generate the collocated cokriging field.
+
+        The field is saved as `self.field` and is also returned.
+        The error variance is saved as `self.krige_var` and is also returned.
 
         Parameters
         ----------
         pos : :class:`list`
-            tuple, containing the given positions (x, [y, z])
+            the position tuple, containing main direction and transversal
+            directions (x, [y, z])
         secondary_data : :class:`numpy.ndarray`
-            Secondary variable values at estimation positions.
+            Secondary variable values at the given positions.
         **kwargs
-            Standard Krige parameters (return_var, chunk_size, only_mean, etc.)
+            Keyword arguments passed to Krige.__call__.
 
         Returns
         -------
         field : :class:`numpy.ndarray`
-            Collocated cokriging estimated field values.
+            the collocated cokriging field
         krige_var : :class:`numpy.ndarray`, optional
-            Collocated cokriging estimation variance (if return_var=True).
+            the collocated cokriging error variance
+            (if return_var is True)
         """
         if secondary_data is None:
             raise ValueError(
                 "secondary_data required for collocated cokriging")
 
-        # Store secondary data for use in _summate
-        self._secondary_data = np.asarray(secondary_data, dtype=np.double)
+        user_return_var = kwargs.get('return_var', True)
+        # always get variance for weight calculation
+        kwargs_with_var = kwargs.copy()
+        kwargs_with_var['return_var'] = True
+        # get simple kriging results
+        sk_field, sk_var = super().__call__(pos=pos, **kwargs_with_var)
+        secondary_data = np.asarray(secondary_data, dtype=np.double)
 
-        try:
-            # Call parent class with variance fix for ICCK
-            result = super().__call__(pos=pos, **kwargs)
-
-            # Fix variance post-processing for ICCK: restore stored variance if computed
-            if (self.algorithm == "intrinsic" and
-                isinstance(result, tuple) and len(result) == 2 and
-                    hasattr(self, '_icck_stored_variance')):
-                field, _ = result  # Ignore the base class modified variance
-                variance = self._icck_stored_variance
-                delattr(self, '_icck_stored_variance')
-                return field, variance
-            else:
-                return result
-        finally:
-            # Clean up temporary attribute
-            if hasattr(self, '_secondary_data'):
-                delattr(self, '_secondary_data')
-
-    def _compute_covariances(self):
-        """
-        Compute the three scalar covariances: C_Z0, C_Y0, C_YZ0.
-
-        Returns
-        -------
-        tuple
-            (C_Z0, C_Y0, C_YZ0) covariances at zero lag
-        """
-        # C_Z0: primary variable variance at zero lag
-        C_Z0 = self.model.sill
-
-        # C_Y0: secondary variable variance at zero lag
-        C_Y0 = self.secondary_var
-
-        # C_YZ0: cross-covariance at zero lag
-        C_YZ0 = self.cross_corr * np.sqrt(C_Z0 * C_Y0)
-
-        return C_Z0, C_Y0, C_YZ0
-
-    def _compute_correlation_coeff_squared(self, C_Z0, C_Y0, C_YZ0):
-        """
-        Compute squared correlation coefficient ρ₀² = C²_YZ0/(C_Y0×C_Z0).
-
-        Parameters
-        ----------
-        C_Z0, C_Y0, C_YZ0 : float
-            Covariances at zero lag
-
-        Returns
-        -------
-        float
-            Squared correlation coefficient
-        """
-        # Handle edge case where variances are zero
-        if C_Y0 * C_Z0 <= 1e-15:
-            return 0.0
-
-        return (C_YZ0**2) / (C_Y0 * C_Z0)
-
-    def _summate(self, field, krige_var, c_slice, k_vec, return_var):
-        """Override to implement algorithm-specific collocated cokriging estimators."""
-        # Get covariances at zero lag
-        C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
-
-        # Handle trivial case where cross-correlation is zero (both algorithms)
-        if abs(C_YZ0) < 1e-15:
-            # Reduces to SK when C_YZ0 = 0
-            return super()._summate(field, krige_var, c_slice, k_vec, return_var)
-
-        # Import at function level to avoid circular imports
-        from gstools.krige.base import _calc_field_krige_and_variance
-
-        # Always compute both SK field and variance (required for both algorithms)
-        sk_field_chunk, sk_var_chunk = _calc_field_krige_and_variance(
-            self._krige_mat, k_vec, self._krige_cond
-        )
-
-        # Get secondary data at estimation positions
-        secondary_chunk = self._secondary_data[c_slice]
-
-        # Algorithm-specific implementations
         if self.algorithm == "MM1":
-            self._summate_mm1(field, krige_var, c_slice, sk_field_chunk,
-                              sk_var_chunk, secondary_chunk, C_Z0, C_Y0, C_YZ0, return_var)
+            cokriging_field, cokriging_var = self._apply_mm1_cokriging(
+                sk_field, sk_var, secondary_data, user_return_var)
         elif self.algorithm == "intrinsic":
-            self._summate_intrinsic(field, krige_var, c_slice, k_vec, sk_field_chunk,
-                                    sk_var_chunk, secondary_chunk, C_Z0, C_Y0, C_YZ0, return_var)
+            # ICCK: secondary-at-primary correction applied in _summate
+            collocated_contribution = self._lambda_Y0 * (
+                secondary_data - self.secondary_mean)
+            cokriging_field = sk_field + collocated_contribution
 
-    def _summate_mm1(self, field, krige_var, c_slice, sk_field_chunk, sk_var_chunk,
-                     secondary_chunk, C_Z0, C_Y0, C_YZ0, return_var):
-        """Implement MM1 (SCCK) algorithm."""
-        # Compute MM1 parameters
-        k = C_YZ0 / C_Z0  # Cross-covariance ratio
+            # ICCK variance: σ²_ICCK = (1-ρ₀²) × σ²_SK
+            if user_return_var:
+                C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
+                rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
+                # sk_var is already in actual variance format (σ²)
+                icck_var = (1.0 - rho_squared) * sk_var
+                icck_var = np.maximum(0.0, icck_var)
+                cokriging_var = icck_var
+            else:
+                cokriging_var = None
+        else:
+            raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
-        # Compute collocated weight using MM1 formula
-        numerator = k * (C_Z0 - sk_var_chunk)
-        denominator = C_Y0 - k**2 * (C_Z0 - sk_var_chunk)
+        if user_return_var:
+            return cokriging_field, cokriging_var
+        return cokriging_field
 
-        # Handle numerical issues
+    def _apply_mm1_cokriging(self, sk_field, sk_var, secondary_data, return_var):
+        """Apply simple collocated cokriging (MM1 algorithm)."""
+        C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
+        k = C_YZ0 / C_Z0
+
+        # NOTE: sk_var from super().__call__() is already actual variance σ²
+        # MM1 collocated weights: λ_Y0 = (k × σ²_SK) / (C_Y0 - k² × σ²_SK)
+        numerator = k * sk_var
+        denominator = C_Y0 - (k**2) * sk_var
         collocated_weights = np.where(
             np.abs(denominator) < 1e-15,
             0.0,
             numerator / denominator
         )
 
-        # MM1 Estimator: Z_SCCK = Z_SK * (1 - k*λ_Y0) + λ_Y0 * Y
-        field[c_slice] = (
-            sk_field_chunk * (1 - k * collocated_weights) +
-            collocated_weights * secondary_chunk
+        # MM1 estimator with mean correction
+        scck_field = (
+            sk_field * (1 - k * collocated_weights) +
+            collocated_weights * (secondary_data - self.secondary_mean) +
+            k * collocated_weights * self.mean
         )
 
-        # Handle variance if requested
         if return_var:
-            scck_variance = sk_var_chunk * (1 - collocated_weights * k)
-            # Note: Due to MM1 limitations, variance may actually be larger than SK
-            krige_var[c_slice] = np.maximum(0.0, scck_variance)
-
-    def _summate_intrinsic(self, field, krige_var, c_slice, k_vec, sk_field_chunk,
-                           sk_var_chunk, secondary_chunk, C_Z0, C_Y0, C_YZ0, return_var):
-        """Implement Intrinsic (ICCK) algorithm."""
-        # Compute SK weights by solving kriging system: λ_SK = A^{-1} × b
-        krige_mat_inv = self._inv(self._krige_mat)
-        # Shape: (n_cond, n_estimation_points)
-        sk_weights = krige_mat_inv @ k_vec
-
-        # Compute ICCK weights based on SK weights
-        lambda_weights, mu_weights, lambda_Y0 = self._compute_icck_weights(
-            sk_weights, C_Y0, C_YZ0
-        )
-
-        # Apply ICCK estimator reformulation
-        # Since λ = λ_SK and μ = -(C_YZ0/C_Y0) × λ_SK, we can write:
-        # Z_ICCK = Z_SK + μ^T × Y_conditioning + λ_Y0 × Y(x0)
-
-        # Handle both single point and multiple points estimation
-        if sk_weights.ndim == 1:
-            # Single estimation point
-            secondary_contribution = np.sum(
-                mu_weights * self.secondary_cond_val)
+            # MM1 variance: σ²_SCCK = σ²_SK × (1 - k × λ_Y0)
+            scck_variance = sk_var * (1 - collocated_weights * k)
+            scck_variance = np.maximum(0.0, scck_variance)
         else:
-            # Multiple estimation points (sk_weights is n_cond x n_points)
-            secondary_contribution = np.sum(
-                mu_weights * self.secondary_cond_val[:, None], axis=0
-            )
+            scck_variance = None
+        return scck_field, scck_variance
 
-        # Collocated contribution
-        collocated_contribution = lambda_Y0 * secondary_chunk
+    def _summate(self, field, krige_var, c_slice, k_vec, return_var):
+        """Apply intrinsic collocated cokriging during kriging solve."""
+        if self.algorithm == "MM1":
+            super()._summate(field, krige_var, c_slice, k_vec, return_var)
+            return
 
-        # Final ICCK estimate
-        field[c_slice] = (
-            sk_field_chunk + secondary_contribution + collocated_contribution
-        )
+        elif self.algorithm == "intrinsic":
+            # extract SK weights
+            sk_weights = self._krige_mat @ k_vec
+            C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
 
-        # Handle variance if requested
-        if return_var:
-            rho_squared = self._compute_correlation_coeff_squared(
-                C_Z0, C_Y0, C_YZ0)
-            icck_variance = self._compute_icck_variance(
-                sk_var_chunk, rho_squared)
+            if abs(C_YZ0) < 1e-15:
+                self._lambda_Y0 = 0.0
+                self._secondary_at_primary = 0.0
+                super()._summate(field, krige_var, c_slice, k_vec, return_var)
+                return
 
-            # Store the ICCK variance for later restoration (base class will modify it)
-            if not hasattr(self, '_icck_stored_variance'):
-                self._icck_stored_variance = np.empty_like(krige_var)
-            self._icck_stored_variance[c_slice] = icck_variance
-
-            # Set the krige_var to match the base class expectation
-            # Base class will do: final_var = max(sill - krige_var, 0)
-            # We want: final_var = icck_variance
-            # So: icck_variance = max(sill - krige_var, 0)
-            # Therefore: krige_var = sill - icck_variance (when icck_variance <= sill)
-            krige_var[c_slice] = self.model.sill - icck_variance
-
-    def _compute_icck_weights(self, sk_weights, C_Y0, C_YZ0):
-        """
-        Compute ICCK weights based on SK solution.
-
-        Parameters
-        ----------
-        sk_weights : numpy.ndarray
-            Simple kriging weights (λ_SK)
-        C_Y0, C_YZ0 : float
-            Secondary and cross covariances at zero lag
-
-        Returns
-        -------
-        tuple
-            (λ, μ, λ_Y0) - ICCK weights
-        """
-        # λ = λ_SK (keep SK weights for primary)
-        lambda_weights = sk_weights
-
-        # Handle edge case where C_Y0 is zero
-        if abs(C_Y0) < 1e-15:
-            # If secondary variance is zero, no contribution from secondary
-            mu_weights = np.zeros_like(sk_weights)
-            lambda_Y0 = 0.0
-        else:
-            # μ = -(C_YZ0/C_Y0) × λ_SK
-            mu_weights = -(C_YZ0 / C_Y0) * sk_weights
-
-            # λ_Y0 = C_YZ0/C_Y0
+            # ICCK weights (proportional assumption)
+            lambda_weights = sk_weights[:self.cond_no]
+            mu_weights = -(C_YZ0 / C_Y0) * lambda_weights
             lambda_Y0 = C_YZ0 / C_Y0
 
-        return lambda_weights, mu_weights, lambda_Y0
+            # secondary-at-primary contribution
+            secondary_residuals = self.secondary_cond_val - self.secondary_mean
+            if sk_weights.ndim == 1:
+                secondary_at_primary = np.sum(mu_weights * secondary_residuals)
+            else:
+                secondary_at_primary = np.sum(
+                    mu_weights * secondary_residuals[:, None], axis=0)
 
-    def _compute_icck_variance(self, sk_variance, rho_squared):
-        """
-        Compute ICCK variance: σ²_ICCK = (1-ρ₀²) × σ²_SK.
+            # store weights for __call__ method
+            self._lambda_Y0 = lambda_Y0
+            self._secondary_at_primary = secondary_at_primary
 
-        Parameters
-        ----------
-        sk_variance : float or numpy.ndarray
-            Simple kriging variance
-        rho_squared : float
-            Squared correlation coefficient ρ₀²
+            # compute base SK field and apply secondary-at-primary correction
+            super()._summate(field, krige_var, c_slice, k_vec, return_var)
+            field[c_slice] += secondary_at_primary
+            # NOTE: Variance is handled in __call__(), not here
+        else:
+            raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
-        Returns
-        -------
-        float or numpy.ndarray
-            ICCK variance (same shape as sk_variance)
-        """
-        # Edge case: perfect correlation |ρ₀|=1 (ρ₀² ≈ 1)
-        if abs(rho_squared - 1.0) < 1e-15:
-            # With perfect correlation, effective dimension drops and variance → 0
-            # This is the degenerate case mentioned in the theory
-            return np.zeros_like(sk_variance)
-
-        # Edge case: SK variance is zero (σ²_SK = 0)
-        # This means estimation location is perfectly interpolated by primaries
-        # In this case, adding secondaries doesn't change the zero variance
-        sk_var_zero = np.abs(sk_variance) < 1e-15
-        if np.any(sk_var_zero):
-            result = (1.0 - rho_squared) * sk_variance
-            result = np.where(sk_var_zero, 0.0, result)
-            return np.maximum(0.0, result)
-
-        # Standard ICCK variance formula
-        icck_variance = (1.0 - rho_squared) * sk_variance
-
-        # Ensure non-negative variance
-        return np.maximum(0.0, icck_variance)
+    def _compute_covariances(self):
+        """Compute covariances at zero lag."""
+        C_Z0 = self.model.sill
+        C_Y0 = self.secondary_var
+        C_YZ0 = self.cross_corr * np.sqrt(C_Z0 * C_Y0)
+        return C_Z0, C_Y0, C_YZ0

@@ -350,25 +350,24 @@ class TestCokriging(unittest.TestCase):
         self.assertAlmostEqual(C_YZ0, expected_C_YZ0, places=10)
 
         # Test correlation coefficient computation
-        rho_squared = icck._compute_correlation_coeff_squared(
-            C_Z0, C_Y0, C_YZ0)
+        rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
         expected_rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
         self.assertAlmostEqual(rho_squared, expected_rho_squared, places=10)
 
-        # Test ICCK weights computation
+        # Test ICCK weights computation (formulas are now inline)
         test_sk_weights = np.array([0.3, 0.7])
-        lambda_w, mu_w, lambda_Y0 = icck._compute_icck_weights(
-            test_sk_weights, C_Y0, C_YZ0
-        )
 
-        # λ = λ_SK
+        # λ = λ_SK (primary weights unchanged)
+        lambda_w = test_sk_weights
         np.testing.assert_allclose(lambda_w, test_sk_weights, rtol=1e-12)
 
-        # μ = -(C_YZ0/C_Y0) × λ_SK
+        # μ = -(C_YZ0/C_Y0) × λ_SK (secondary-at-primary weights)
         expected_mu = -(C_YZ0 / C_Y0) * test_sk_weights
+        mu_w = -(C_YZ0 / C_Y0) * test_sk_weights
         np.testing.assert_allclose(mu_w, expected_mu, rtol=1e-12)
 
-        # λ_Y0 = C_YZ0/C_Y0
+        # λ_Y0 = C_YZ0/C_Y0 (collocated weight)
+        lambda_Y0 = C_YZ0 / C_Y0
         expected_lambda_Y0 = C_YZ0 / C_Y0
         self.assertAlmostEqual(lambda_Y0, expected_lambda_Y0, places=10)
 

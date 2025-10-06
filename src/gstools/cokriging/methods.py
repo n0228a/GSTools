@@ -10,6 +10,7 @@ The following classes are provided
    ICCK
 """
 
+import numpy as np
 from gstools.cokriging.base import CollocatedCokriging
 
 __all__ = ["SCCK", "ICCK"]
@@ -24,10 +25,14 @@ class SCCK(CollocatedCokriging):
     coregionalization model where ρ_yz(h) = ρ_yz(0)ρ_z(h), enabling efficient
     reuse of simple kriging computations with collocated adjustments.
 
-    The estimator follows the elegant form:
-    Z_SCCK(x) = Z_SK(x) × (1 - k×λ_Y0) + λ_Y0 × Y(x)
+    The estimator follows the proper anomaly-space form:
+    Z^SCCK = Z^SK (1−kλY0) + λY0 (Y(u0)−mY) + mZ
 
-    where k is the cross-covariance ratio and λ_Y0 is the collocated weight.
+    where k is the cross-covariance ratio, λ_Y0 is the collocated weight,
+    mY is the secondary mean, and mZ is the primary mean.
+
+    Note: The implementation computes Z^SK (1−kλY0) + λY0 (Y(u0)−mY)
+    and lets the post-processing handle adding mZ.
 
     Parameters
     ----------
@@ -43,7 +48,9 @@ class SCCK(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging. Default: 0.0
+        Mean value for simple kriging (primary variable mean mZ). Default: 0.0
+    secondary_mean : :class:`float`, optional
+        Mean value of the secondary variable (mY). Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.
@@ -103,6 +110,7 @@ class SCCK(CollocatedCokriging):
         cross_corr,
         secondary_var,
         mean=0.0,
+        secondary_mean=0.0,
         normalizer=None,
         trend=None,
         exact=False,
@@ -112,14 +120,16 @@ class SCCK(CollocatedCokriging):
         fit_normalizer=False,
         fit_variogram=False,
     ):
+        # Initialize using base class with MM1 algorithm
         super().__init__(
             model=model,
             cond_pos=cond_pos,
             cond_val=cond_val,
             cross_corr=cross_corr,
             secondary_var=secondary_var,
-            algorithm="MM1",  # SCCK uses MM1 algorithm
+            algorithm="MM1",
             mean=mean,
+            secondary_mean=secondary_mean,
             normalizer=normalizer,
             trend=trend,
             exact=exact,
@@ -166,7 +176,9 @@ class ICCK(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging. Default: 0.0
+        Mean value for simple kriging (primary variable mean mZ). Default: 0.0
+    secondary_mean : :class:`float`, optional
+        Mean value of the secondary variable (mY). Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.
@@ -228,6 +240,7 @@ class ICCK(CollocatedCokriging):
         cross_corr,
         secondary_var,
         mean=0.0,
+        secondary_mean=0.0,
         normalizer=None,
         trend=None,
         exact=False,
@@ -237,16 +250,18 @@ class ICCK(CollocatedCokriging):
         fit_normalizer=False,
         fit_variogram=False,
     ):
+        # Initialize using base class with intrinsic algorithm
         super().__init__(
             model=model,
             cond_pos=cond_pos,
             cond_val=cond_val,
             cross_corr=cross_corr,
             secondary_var=secondary_var,
-            algorithm="intrinsic",  # ICCK uses intrinsic algorithm
+            algorithm="intrinsic",
             secondary_cond_pos=secondary_cond_pos,
             secondary_cond_val=secondary_cond_val,
             mean=mean,
+            secondary_mean=secondary_mean,
             normalizer=normalizer,
             trend=trend,
             exact=exact,

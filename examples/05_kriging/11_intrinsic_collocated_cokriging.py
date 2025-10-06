@@ -33,7 +33,7 @@ from gstools.cokriging import SCCK, ICCK
 ###############################################################################
 # Generate data
 
-np.random.seed(42)
+np.random.seed(4)
 
 # primary data - sparse sampling with gap around x=8-12
 cond_pos = np.array([0.5, 2.1, 3.8, 6.2, 13.5])
@@ -46,12 +46,11 @@ sec_pos = np.linspace(0, 15, 31)
 primary_trend = np.interp(sec_pos, cond_pos, cond_val)
 
 # add spatial feature in gap region (x=8-12) to demonstrate cokriging benefit
-gap_feature = 0.4 * np.exp(-((sec_pos - 10.0) / 2.0)**2)
+gap_feature = - 1.6 * np.exp(-((sec_pos - 10.0) / 2.0)**2)
+gap_feature2 = - 0.95 * np.exp(-((sec_pos - 4.0) / 2.0)**2)
 
 # secondary = 0.85 * primary_pattern + gap_feature + small_noise
-sec_val = 0.85 * primary_trend + gap_feature + \
-    0.1 * np.random.randn(len(sec_pos))
-
+sec_val = 0.99 * primary_trend + gap_feature + gap_feature2
 # Secondary data at primary conditioning locations (required for ICCK)
 sec_at_primary = np.interp(cond_pos, sec_pos, sec_val)
 
@@ -80,13 +79,18 @@ sk_field, sk_var = sk(pos=gridx, return_var=True)
 # calculate cross-correlation
 cross_corr = np.corrcoef(cond_val, sec_at_primary)[0, 1]
 
+# calculate secondary mean (required for proper cokriging)
+secondary_mean = np.mean(sec_val)
+print(secondary_mean)
+
 scck = SCCK(
     model=model,
     cond_pos=cond_pos,
     cond_val=cond_val,
     cross_corr=cross_corr,
     secondary_var=np.var(sec_val),
-    mean=1.0
+    mean=1.0,  # primary mean
+    secondary_mean=secondary_mean  # secondary mean for proper cokriging
 )
 
 # interpolate secondary data to grid
@@ -105,7 +109,8 @@ icck = ICCK(
     secondary_cond_val=sec_at_primary,  # Secondary values at primary locations
     cross_corr=cross_corr,
     secondary_var=np.var(sec_val),
-    mean=1.0
+    mean=1.0,  # primary mean
+    secondary_mean=secondary_mean  # secondary mean for proper cokriging
 )
 
 icck_field, icck_var = icck(
