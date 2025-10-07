@@ -36,6 +36,16 @@ Swiss-Army-Knife for Kriging. For short cut classes see: :any:`gstools.krige`
 .. autosummary::
    Krige
 
+Cokriging
+^^^^^^^^^
+Collocated cokriging methods for multivariate estimation
+
+.. currentmodule:: gstools.cokriging
+
+.. autosummary::
+   SimpleCollocated
+   IntrinsicCollocated
+
 Spatial Random Field
 ^^^^^^^^^^^^^^^^^^^^
 Classes for (conditioned) random field generation
@@ -169,6 +179,7 @@ from gstools.covmodel import (
 )
 from gstools.field import PGS, SRF, CondSRF
 from gstools.krige import Krige
+from gstools.cokriging import SimpleCollocated, IntrinsicCollocated
 from gstools.tools import (
     DEGREE_SCALE,
     EARTH_RADIUS,
@@ -234,6 +245,8 @@ __all__ += [
 
 __all__ += [
     "Krige",
+    "SimpleCollocated",
+    "IntrinsicCollocated",
     "SRF",
     "CondSRF",
     "PGS",
