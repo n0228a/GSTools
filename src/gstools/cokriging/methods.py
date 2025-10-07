@@ -6,33 +6,39 @@ GStools subpackage providing cokriging methods.
 The following classes are provided
 
 .. autosummary::
-   SCCK
-   ICCK
+   SimpleCollocated
+   IntrinsicCollocated
 """
 
 import numpy as np
 from gstools.cokriging.base import CollocatedCokriging
 
-__all__ = ["SCCK", "ICCK"]
+__all__ = ["SimpleCollocated", "IntrinsicCollocated"]
 
 
-class SCCK(CollocatedCokriging):
+class SimpleCollocated(CollocatedCokriging):
     """
-    Simple Collocated Cokriging using Markov Model I (MM1) algorithm.
+    Simple collocated cokriging.
 
-    SCCK extends simple kriging by incorporating secondary variable information
-    at estimation locations. The MM1 algorithm assumes a Markov-type
-    coregionalization model where ρ_yz(h) = ρ_yz(0)ρ_z(h), enabling efficient
-    reuse of simple kriging computations with collocated adjustments.
+    Simple collocated cokriging extends simple kriging by incorporating
+    secondary variable data at the estimation location only.
 
-    The estimator follows the proper anomaly-space form:
-    Z^SCCK = Z^SK (1−kλY0) + λY0 (Y(u0)−mY) + mZ
+    **Markov Model I (MM1) Assumption:**
 
-    where k is the cross-covariance ratio, λ_Y0 is the collocated weight,
-    mY is the secondary mean, and mZ is the primary mean.
+    Assumes C_YZ(h) = ρ_YZ(0)·C_Z(h), meaning the cross-covariance is
+    proportional to the primary covariance structure. This requires similar
+    spatial correlation patterns between primary and secondary variables.
 
-    Note: The implementation computes Z^SK (1−kλY0) + λY0 (Y(u0)−mY)
-    and lets the post-processing handle adding mZ.
+    **Known Limitation:**
+
+    MM1 can produce variance inflation where σ²_SCCK > σ²_SK in some cases.
+    For accurate variance estimation, use IntrinsicCollocated instead.
+
+    **Estimator:**
+
+    Z*_SCCK = Z*_SK·(1-k·λ_Y0) + λ_Y0·(Y(u0)-m_Y) + k·λ_Y0·m_Z
+
+    where k = C_YZ(0)/C_Z(0) and λ_Y0 is computed from the MM1 formula.
 
     Parameters
     ----------
@@ -48,9 +54,12 @@ class SCCK(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging (primary variable mean mZ). Default: 0.0
+        Mean value for simple kriging (primary variable mean m_Z). Default: 0.0
     secondary_mean : :class:`float`, optional
-        Mean value of the secondary variable (mY). Default: 0.0
+        Mean value of the secondary variable (m_Y).
+        Required for simple collocated cokriging to properly handle
+        the anomaly-space formulation: Y(u) - m_Y.
+        Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.
@@ -120,14 +129,14 @@ class SCCK(CollocatedCokriging):
         fit_normalizer=False,
         fit_variogram=False,
     ):
-        # Initialize using base class with MM1 algorithm
+        # Initialize using base class with simple collocated algorithm
         super().__init__(
             model=model,
             cond_pos=cond_pos,
             cond_val=cond_val,
             cross_corr=cross_corr,
             secondary_var=secondary_var,
-            algorithm="MM1",
+            algorithm="simple",
             mean=mean,
             secondary_mean=secondary_mean,
             normalizer=normalizer,
@@ -141,22 +150,35 @@ class SCCK(CollocatedCokriging):
         )
 
 
-class ICCK(CollocatedCokriging):
+class IntrinsicCollocated(CollocatedCokriging):
     """
-    Intrinsic Collocated Cokriging using improved variance estimation.
+    Intrinsic collocated cokriging.
 
-    ICCK builds on Simple Kriging (or Ordinary Kriging) solutions and provides
-    improved variance estimation compared to SCCK. Unlike SCCK's MM1 approach,
-    ICCK requires secondary data at all primary conditioning locations and uses
-    the more accurate variance formula σ²_ICCK = (1-ρ₀²)σ²_SK.
+    Intrinsic collocated cokriging extends simple kriging by incorporating
+    secondary variable data at both the estimation location AND at all
+    primary conditioning locations.
 
-    The ICCK weights are:
-    - λ = λ_SK (keep Simple Kriging weights for primary variable)
-    - μ = -(C_YZ0/C_Y0) × λ_SK (adjustment weights for secondary at primary locations)
-    - λ_Y0 = C_YZ0/C_Y0 (collocated weight for secondary at estimation point)
+    **Markov Model I (MM1) Assumption:**
 
-    The ICCK variance eliminates the inflation issues seen in MM1:
-    σ²_ICCK = (1-ρ₀²) × σ²_SK, where ρ₀² = C²_YZ0/(C_Y0×C_Z0)
+    Like SimpleCollocated, assumes C_YZ(h) = ρ_YZ(0)·C_Z(h).
+
+    **Advantage over SimpleCollocated:**
+
+    Uses improved variance formula that eliminates MM1 variance inflation:
+    σ²_ICCK = (1-ρ₀²)·σ²_SK ≤ σ²_SK
+
+    where ρ₀² = C²_YZ(0)/(C_Y(0)·C_Z(0)) is the squared correlation at zero lag.
+
+    **Trade-off:**
+
+    Requires secondary data at all primary locations (not just at estimation point).
+    Matrix size nearly doubles compared to SimpleCollocated.
+
+    **ICCK Weights:**
+
+    - λ = λ_SK (Simple Kriging weights for primaries)
+    - μ = -(C_YZ(0)/C_Y(0))·λ_SK (secondary-at-primary adjustment)
+    - λ_Y0 = C_YZ(0)/C_Y(0) (collocated weight)
 
     Parameters
     ----------
@@ -176,9 +198,12 @@ class ICCK(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging (primary variable mean mZ). Default: 0.0
+        Mean value for simple kriging (primary variable mean m_Z). Default: 0.0
     secondary_mean : :class:`float`, optional
-        Mean value of the secondary variable (mY). Default: 0.0
+        Mean value of the secondary variable (m_Y).
+        Required for intrinsic collocated cokriging to properly handle
+        the anomaly-space formulation: Y(u) - m_Y.
+        Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.

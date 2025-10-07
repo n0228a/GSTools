@@ -28,7 +28,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from gstools import Gaussian
 from gstools.krige import Simple
-from gstools.cokriging import SCCK, ICCK
+from gstools.cokriging import SimpleCollocated, IntrinsicCollocated
 
 ###############################################################################
 # Generate data
@@ -83,7 +83,7 @@ cross_corr = np.corrcoef(cond_val, sec_at_primary)[0, 1]
 secondary_mean = np.mean(sec_val)
 print(secondary_mean)
 
-scck = SCCK(
+scck = SimpleCollocated(
     model=model,
     cond_pos=cond_pos,
     cond_val=cond_val,
@@ -101,7 +101,7 @@ scck_field, scck_var = scck(
 ###############################################################################
 # Intrinsic Collocated Cokriging (ICCK)
 
-icck = ICCK(
+icck = IntrinsicCollocated(
     model=model,
     cond_pos=cond_pos,
     cond_val=cond_val,

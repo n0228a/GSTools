@@ -10,11 +10,11 @@ Cokriging Classes
    :toctree:
 
    CollocatedCokriging
-   SCCK
-   ICCK
+   SimpleCollocated
+   IntrinsicCollocated
 """
 
 from gstools.cokriging.base import CollocatedCokriging
-from gstools.cokriging.methods import SCCK, ICCK
+from gstools.cokriging.methods import SimpleCollocated, IntrinsicCollocated
 
-__all__ = ["CollocatedCokriging", "SCCK", "ICCK"]
+__all__ = ["CollocatedCokriging", "SimpleCollocated", "IntrinsicCollocated"]

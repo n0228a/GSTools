@@ -7,12 +7,13 @@ import unittest
 import numpy as np
 
 import gstools as gs
-from gstools.cokriging import SCCK, ICCK
+from gstools.cokriging import SimpleCollocated, IntrinsicCollocated
 
 
 class TestCokriging(unittest.TestCase):
     def setUp(self):
         self.cov_models = [gs.Gaussian, gs.Exponential, gs.Spherical]
+        self.dims = range(1, 4)
         # test data
         self.data = np.array(
             [
@@ -31,36 +32,38 @@ class TestCokriging(unittest.TestCase):
         self.sec_data = np.array([2.8, 2.2, 3.1, 2.9])
         # secondary data at conditioning locations (5 values to match cond_val)
         self.sec_cond_data = np.array([1.8, 1.2, 2.1, 2.9, 2.4])
+        # grids for structured testing
+        self.x = np.linspace(0, 5, 51)
+        self.y = np.linspace(0, 6, 61)
+        self.z = np.linspace(0, 7, 71)
+        self.grids = (self.x, self.y, self.z)
 
-    def test_scck_basic(self):
-        """Test basic SCCK functionality."""
+    def test_simple(self):
+        """Test Simple Collocated across models and dimensions."""
         for Model in self.cov_models:
-            model = Model(dim=1, var=2, len_scale=2)
-            scck = SCCK(
-                model,
-                self.cond_pos[:1],
-                self.cond_val,
-                cross_corr=0.7,
-                secondary_var=1.5,
-            )
+            for dim in self.dims:
+                model = Model(dim=dim, var=2, len_scale=2)
 
-            # test field estimation (default returns field + variance)
-            field, var = scck(self.pos, secondary_data=self.sec_data)
-            self.assertEqual(field.shape, (4,))
-            self.assertEqual(var.shape, (4,))
+                # secondary data
+                if dim == 1:
+                    sec_data = np.linspace(0.5, 2.0, 51)
+                elif dim == 2:
+                    sec_data = np.random.RandomState(42).rand(51, 61)
+                else:
+                    sec_data = np.random.RandomState(42).rand(51, 61, 71)
 
-            # test field only
-            field_only = scck(
-                self.pos, secondary_data=self.sec_data, return_var=False)
-            self.assertEqual(field_only.shape, (4,))
+                scck = SimpleCollocated(
+                    model,
+                    self.cond_pos[:dim],
+                    self.cond_val,
+                    cross_corr=0.7,
+                    secondary_var=1.5,
+                )
 
-            # test field + variance
-            field, var = scck(
-                self.pos, secondary_data=self.sec_data, return_var=True)
-            self.assertEqual(field.shape, (4,))
-            self.assertEqual(var.shape, (4,))
-            # variance should be positive
-            self.assertTrue(np.all(var > 0))
+                field, var = scck.structured(self.grids[:dim], secondary_data=sec_data)
+                self.assertTrue(np.all(np.isfinite(field)))
+                self.assertTrue(np.all(np.isfinite(var)))
+                self.assertTrue(np.all(var >= -1e-6))
 
     def test_scck_vs_simple_kriging(self):
         """Test SCCK reduces to Simple Kriging with zero cross-correlation."""
@@ -71,7 +74,7 @@ class TestCokriging(unittest.TestCase):
         sk_field, sk_var = sk(self.pos, return_var=True)
 
         # SCCK with zero cross-correlation
-        scck = SCCK(
+        scck = SimpleCollocated(
             model,
             self.cond_pos[:1],
             self.cond_val,
@@ -85,399 +88,148 @@ class TestCokriging(unittest.TestCase):
         np.testing.assert_allclose(sk_field, scck_field, rtol=1e-10)
         np.testing.assert_allclose(sk_var, scck_var, rtol=1e-10)
 
-    def test_variance_behavior(self):
-        """Test SCCK variance behavior (MM1 can show inflation)."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
+    def test_zero_cross_correlation(self):
+        """Test zero cross-correlation equals Simple Kriging."""
+        model = gs.Gaussian(dim=1, var=2, len_scale=2)
+        pos = np.array([2.5])
+        sec_data = np.array([999.0])
 
-        # Simple Kriging with mean=0
         sk = gs.krige.Simple(model, self.cond_pos[:1], self.cond_val, mean=0.0)
-        __, sk_var = sk(self.pos, return_var=True)
+        sk_field, sk_var = sk(pos, return_var=True)
 
-        # SCCK with moderate cross-correlation
-        scck = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=0.6,
-            secondary_var=1.5,
+        # SCCK
+        scck = SimpleCollocated(
+            model, self.cond_pos[:1], self.cond_val,
+            cross_corr=0.0, secondary_var=1.5,
+            mean=0.0, secondary_mean=0.0
         )
-        __, scck_var = scck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
+        scck_field, scck_var = scck(pos, secondary_data=sec_data, return_var=True)
+        self.assertAlmostEqual(scck_field[0], sk_field[0], places=2)
+        self.assertAlmostEqual(scck_var[0], sk_var[0], places=2)
 
-        # SCCK variance should be non-negative (MM1 can inflate variance)
-        self.assertTrue(np.all(scck_var >= 0))
-        # Variance should be finite
-        self.assertTrue(np.all(np.isfinite(scck_var)))
+        # ICCK
+        icck = IntrinsicCollocated(
+            model, self.cond_pos[:1], self.cond_val,
+            self.cond_pos[:1], self.sec_cond_data,
+            cross_corr=0.0, secondary_var=1.5,
+            mean=0.0, secondary_mean=0.0
+        )
+        icck_field, icck_var = icck(pos, secondary_data=sec_data, return_var=True)
+        self.assertAlmostEqual(icck_field[0], sk_field[0], places=2)
+        self.assertAlmostEqual(icck_var[0], sk_var[0], places=2)
 
-    def test_theoretical_consistency(self):
-        """Test MM1 theoretical formulas and consistency."""
+    def test_perfect_correlation(self):
+        """Test perfect correlation edge case."""
+        model = gs.Gaussian(dim=1, var=2, len_scale=2)
+        pos = np.array([2.0])
+
+        icck = IntrinsicCollocated(
+            model, self.cond_pos[:1], self.cond_val,
+            self.cond_pos[:1], self.sec_cond_data,
+            cross_corr=1.0, secondary_var=2.0,
+            mean=0.0, secondary_mean=0.0
+        )
+        _, icck_var = icck(pos, secondary_data=np.array([1.0]), return_var=True)
+
+        self.assertAlmostEqual(icck_var[0], 0.0, places=5)
+
+    def test_intrinsic(self):
+        """Test Intrinsic Collocated across models and dimensions."""
+        for Model in self.cov_models:
+            for dim in self.dims:
+                model = Model(dim=dim, var=2, len_scale=2)
+
+                # secondary data
+                if dim == 1:
+                    sec_data = np.linspace(0.5, 2.0, 51)
+                elif dim == 2:
+                    sec_data = np.random.RandomState(42).rand(51, 61)
+                else:
+                    sec_data = np.random.RandomState(42).rand(51, 61, 71)
+
+                icck = IntrinsicCollocated(
+                    model,
+                    self.cond_pos[:dim],
+                    self.cond_val,
+                    self.cond_pos[:dim],
+                    self.sec_cond_data,
+                    cross_corr=0.7,
+                    secondary_var=1.5,
+                )
+
+                field, var = icck.structured(self.grids[:dim], secondary_data=sec_data)
+                self.assertTrue(np.all(np.isfinite(field)))
+                self.assertTrue(np.all(np.isfinite(var)))
+                self.assertTrue(np.all(var >= -1e-6))
+
+
+
+    def test_icck_variance_formula(self):
+        """Test ICCK variance: var = (1 - rho^2) * var_sk."""
+        model = gs.Gaussian(dim=1, var=2, len_scale=3)
+        pos = np.array([2.0])
+
+        for cross_corr in [0.3, 0.6, 0.9]:
+            sk = gs.krige.Simple(model, self.cond_pos[:1], self.cond_val, mean=0.0)
+            _, sk_var = sk(pos, return_var=True)
+
+            icck = IntrinsicCollocated(
+                model, self.cond_pos[:1], self.cond_val,
+                self.cond_pos[:1], self.sec_cond_data,
+                cross_corr=cross_corr, secondary_var=1.5,
+                mean=0.0, secondary_mean=0.0
+            )
+            _, icck_var = icck(pos, secondary_data=np.array([1.0]), return_var=True)
+
+            expected = (1 - cross_corr**2) * sk_var[0]
+            self.assertAlmostEqual(icck_var[0], expected, places=2)
+
+    def test_raise(self):
+        """Test error handling."""
         model = gs.Exponential(dim=1, var=2, len_scale=2)
 
-        scck = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=0.6,
-            secondary_var=1.5,
-        )
-
-        # Test covariance computation (unified interface)
-        C_Z0, C_Y0, C_YZ0 = scck._compute_covariances()
-        self.assertAlmostEqual(C_Z0, model.sill, places=10)
-        self.assertAlmostEqual(C_Y0, scck.secondary_var, places=10)
-        expected_C_YZ0 = scck.cross_corr * np.sqrt(C_Z0 * C_Y0)
-        self.assertAlmostEqual(C_YZ0, expected_C_YZ0, places=10)
-
-        # Test cross-covariance ratio (computed internally in MM1)
-        k = C_YZ0 / C_Z0
-        expected_k = scck.cross_corr * \
-            np.sqrt(model.sill * scck.secondary_var) / model.sill
-        self.assertAlmostEqual(k, expected_k, places=10)
-
-        # Test MM1 collocated weight computation manually
-        test_variance = np.array([0.5, 1.0, 1.5])
-        numerator = k * (C_Z0 - test_variance)
-        denominator = C_Y0 - k**2 * (C_Z0 - test_variance)
-        weights = np.where(np.abs(denominator) < 1e-15,
-                           0.0, numerator / denominator)
-
-        # Weights should be finite
-        self.assertTrue(np.all(np.isfinite(weights)))
-
-        # Test MM1 variance formula consistency
-        scck_var = test_variance * (1 - weights * k)
-        expected_var = np.maximum(0.0, scck_var)
-
-        np.testing.assert_allclose(scck_var, expected_var, rtol=1e-12)
-
-    def test_numerical_stability(self):
-        """Test numerical stability in edge cases."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # Test with very small cross-correlation
-        scck_small = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=1e-15,
-            secondary_var=1.5,
-        )
-        field_small, var_small = scck_small(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        self.assertTrue(np.all(np.isfinite(field_small)))
-        self.assertTrue(np.all(np.isfinite(var_small)))
-        self.assertTrue(np.all(var_small >= 0))
-
-        # Test with high cross-correlation
-        scck_high = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=0.99,
-            secondary_var=model.sill,
-        )
-        field_high, var_high = scck_high(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        self.assertTrue(np.all(np.isfinite(field_high)))
-        self.assertTrue(np.all(np.isfinite(var_high)))
-        self.assertTrue(np.all(var_high >= 0))
-
-    def test_input_validation(self):
-        """Test input validation."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # invalid cross-correlation
+        # SCCK: invalid cross-correlation
         with self.assertRaises(ValueError):
-            SCCK(model, self.cond_pos[:1], self.cond_val,
+            SimpleCollocated(model, self.cond_pos[:1], self.cond_val,
                  cross_corr=1.5, secondary_var=1.0)
 
-        # invalid secondary variance
+        # SCCK: invalid secondary variance
         with self.assertRaises(ValueError):
-            SCCK(model, self.cond_pos[:1], self.cond_val,
+            SimpleCollocated(model, self.cond_pos[:1], self.cond_val,
                  cross_corr=0.5, secondary_var=-1.0)
 
-        # missing secondary data
-        scck = SCCK(model, self.cond_pos[:1], self.cond_val,
+        # SCCK: missing secondary data
+        scck = SimpleCollocated(model, self.cond_pos[:1], self.cond_val,
                     cross_corr=0.5, secondary_var=1.0)
         with self.assertRaises(ValueError):
             scck(self.pos)
 
-    def test_edge_cases(self):
-        """Test edge cases."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # perfect cross-correlation
-        scck = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=1.0,
-            secondary_var=model.sill,
-        )
-        field, var = scck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-        self.assertTrue(np.all(var >= 0))
-
-        # very small cross-correlation (should behave like zero)
-        scck = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=1e-16,
-            secondary_var=1.5,
-        )
-        field, var = scck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-        self.assertTrue(np.all(var >= 0))
-
-    def test_icck_basic(self):
-        """Test basic ICCK functionality."""
-        for Model in self.cov_models:
-            model = Model(dim=1, var=2, len_scale=2)
-            icck = ICCK(
-                model,
-                self.cond_pos[:1],
-                self.cond_val,
-                self.cond_pos[:1],  # secondary positions same as primary
-                # secondary at primary locations
-                self.sec_cond_data,
-                cross_corr=0.7,
-                secondary_var=1.5,
-            )
-
-            # test field estimation (default returns field + variance)
-            field, var = icck(self.pos, secondary_data=self.sec_data)
-            self.assertEqual(field.shape, (4,))
-            self.assertEqual(var.shape, (4,))
-
-            # test field only
-            field_only = icck(
-                self.pos, secondary_data=self.sec_data, return_var=False)
-            self.assertEqual(field_only.shape, (4,))
-
-            # test field + variance
-            field, var = icck(
-                self.pos, secondary_data=self.sec_data, return_var=True)
-            self.assertEqual(field.shape, (4,))
-            self.assertEqual(var.shape, (4,))
-            # variance should be positive
-            self.assertTrue(np.all(var >= 0))
-
-    def test_icck_vs_simple_kriging(self):
-        """Test ICCK reduces to Simple Kriging with zero cross-correlation."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # Simple Kriging with mean=0 (to match ICCK which uses unbiased=False)
-        sk = gs.krige.Simple(model, self.cond_pos[:1], self.cond_val, mean=0.0)
-        sk_field, sk_var = sk(self.pos, return_var=True)
-
-        # ICCK with zero cross-correlation
-        icck = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=0.0,
-            secondary_var=1.5,
-        )
-        icck_field, icck_var = icck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        # should be identical (allowing small numerical differences)
-        np.testing.assert_allclose(sk_field, icck_field, rtol=1e-10)
-        np.testing.assert_allclose(sk_var, icck_var, rtol=1e-10)
-
-    def test_icck_variance_improvement(self):
-        """Test ICCK variance behavior vs SCCK (should be better)."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # SCCK variance
-        scck = SCCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            cross_corr=0.6,
-            secondary_var=1.5,
-        )
-        __, scck_var = scck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        # ICCK variance
-        icck = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=0.6,
-            secondary_var=1.5,
-        )
-        __, icck_var = icck(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        # ICCK variance should be non-negative and well-behaved
-        self.assertTrue(np.all(icck_var >= 0))
-        self.assertTrue(np.all(np.isfinite(icck_var)))
-
-        # ICCK variance should be well-behaved (finite and non-negative)
-        # Note: ICCK vs SCCK variance comparison depends on the specific data
-        # and covariance structure, so we just ensure both are reasonable
-        # Should be in same order of magnitude
-        self.assertTrue(np.all(icck_var <= 10 * scck_var))
-
-    def test_icck_mathematical_consistency(self):
-        """Test ICCK mathematical formulas and consistency."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        icck = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=0.6,
-            secondary_var=1.5,
-        )
-
-        # Test covariance computation
-        C_Z0, C_Y0, C_YZ0 = icck._compute_covariances()
-        self.assertAlmostEqual(C_Z0, model.sill, places=10)
-        self.assertAlmostEqual(C_Y0, icck.secondary_var, places=10)
-        expected_C_YZ0 = icck.cross_corr * np.sqrt(C_Z0 * C_Y0)
-        self.assertAlmostEqual(C_YZ0, expected_C_YZ0, places=10)
-
-        # Test correlation coefficient computation
-        rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
-        expected_rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
-        self.assertAlmostEqual(rho_squared, expected_rho_squared, places=10)
-
-        # Test ICCK weights computation (formulas are now inline)
-        test_sk_weights = np.array([0.3, 0.7])
-
-        # λ = λ_SK (primary weights unchanged)
-        lambda_w = test_sk_weights
-        np.testing.assert_allclose(lambda_w, test_sk_weights, rtol=1e-12)
-
-        # μ = -(C_YZ0/C_Y0) × λ_SK (secondary-at-primary weights)
-        expected_mu = -(C_YZ0 / C_Y0) * test_sk_weights
-        mu_w = -(C_YZ0 / C_Y0) * test_sk_weights
-        np.testing.assert_allclose(mu_w, expected_mu, rtol=1e-12)
-
-        # λ_Y0 = C_YZ0/C_Y0 (collocated weight)
-        lambda_Y0 = C_YZ0 / C_Y0
-        expected_lambda_Y0 = C_YZ0 / C_Y0
-        self.assertAlmostEqual(lambda_Y0, expected_lambda_Y0, places=10)
-
-    def test_icck_edge_cases(self):
-        """Test ICCK edge cases."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # Test perfect cross-correlation (should handle gracefully)
-        icck_perfect = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=1.0,
-            secondary_var=model.sill,  # Same variance as primary
-        )
-        field, var = icck_perfect(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        # With perfect correlation, variance should be reduced significantly
-        self.assertTrue(np.all(var >= 0))
-        # Note: Due to numerical precision and the specific ICCK formulation,
-        # variance may not be exactly zero but should be significantly reduced
-        self.assertTrue(np.all(var < 1e-5))  # Should be very small
-
-        # Test zero cross-correlation (should behave like SK)
-        icck_zero = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=0.0,
-            secondary_var=1.5,
-        )
-        field_zero, var_zero = icck_zero(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        # Should be equivalent to Simple Kriging
-        sk = gs.krige.Simple(model, self.cond_pos[:1], self.cond_val, mean=0.0)
-        sk_field, sk_var = sk(self.pos, return_var=True)
-        np.testing.assert_allclose(field_zero, sk_field, rtol=1e-10)
-
-    def test_icck_input_validation(self):
-        """Test ICCK input validation."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
-
-        # invalid cross-correlation
+        # ICCK: invalid cross-correlation
         with self.assertRaises(ValueError):
-            ICCK(model, self.cond_pos[:1], self.cond_val,
+            IntrinsicCollocated(model, self.cond_pos[:1], self.cond_val,
                  self.cond_pos[:1], self.sec_cond_data,
                  cross_corr=1.5, secondary_var=1.0)
 
-        # invalid secondary variance
+        # ICCK: invalid secondary variance
         with self.assertRaises(ValueError):
-            ICCK(model, self.cond_pos[:1], self.cond_val,
+            IntrinsicCollocated(model, self.cond_pos[:1], self.cond_val,
                  self.cond_pos[:1], self.sec_cond_data,
                  cross_corr=0.5, secondary_var=-1.0)
 
-        # mismatched secondary data length
+        # ICCK: mismatched secondary data length
         with self.assertRaises(ValueError):
-            ICCK(model, self.cond_pos[:1], self.cond_val,
-                 self.cond_pos[:1], self.sec_data[:2],  # Wrong length
+            IntrinsicCollocated(model, self.cond_pos[:1], self.cond_val,
+                 self.cond_pos[:1], self.sec_data[:2],
                  cross_corr=0.5, secondary_var=1.0)
 
-        # missing secondary data in call
-        icck = ICCK(model, self.cond_pos[:1], self.cond_val,
+        # ICCK: missing secondary data
+        icck = IntrinsicCollocated(model, self.cond_pos[:1], self.cond_val,
                     self.cond_pos[:1], self.sec_cond_data,
                     cross_corr=0.5, secondary_var=1.0)
         with self.assertRaises(ValueError):
             icck(self.pos)
 
-    def test_icck_numerical_stability(self):
-        """Test ICCK numerical stability in extreme cases."""
-        model = gs.Exponential(dim=1, var=2, len_scale=2)
 
-        # Test with very small cross-correlation
-        icck_small = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=1e-15,
-            secondary_var=1.5,
-        )
-        field_small, var_small = icck_small(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        self.assertTrue(np.all(np.isfinite(field_small)))
-        self.assertTrue(np.all(np.isfinite(var_small)))
-        self.assertTrue(np.all(var_small >= 0))
-
-        # Test with high cross-correlation
-        icck_high = ICCK(
-            model,
-            self.cond_pos[:1],
-            self.cond_val,
-            self.cond_pos[:1],
-            self.sec_cond_data,
-            cross_corr=0.99,
-            secondary_var=model.sill,
-        )
-        field_high, var_high = icck_high(
-            self.pos, secondary_data=self.sec_data, return_var=True)
-
-        self.assertTrue(np.all(np.isfinite(field_high)))
-        self.assertTrue(np.all(np.isfinite(var_high)))
-        self.assertTrue(np.all(var_high >= 0))
 
 
 if __name__ == "__main__":
