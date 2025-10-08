@@ -25,10 +25,9 @@ class CollocatedCokriging(Krige):
 
     **Important Assumption - Markov Model I (MM1):**
 
-    Both variants assume the cross-covariance is proportional to the
-    primary covariance:
+    Both variants assume the cross-covariance follows:
 
-        C_YZ(h) = ρ_YZ(0) · C_Z(h)
+        C_YZ(h) = ρ_YZ(0) · √(C_Z(h) · C_Y(h))
 
     where ρ_YZ(0) is the cross-correlation at zero lag. This assumption
     requires that primary and secondary variables have similar spatial
@@ -59,7 +58,7 @@ class CollocatedCokriging(Krige):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     algorithm : :class:`str`
-        Cokriging algorithm to use. Either "MM1" (SCCK) or "intrinsic" (ICCK).
+        Cokriging algorithm to use. Either "simple" (SCCK) or "intrinsic" (ICCK).
     secondary_cond_pos : :class:`list`, optional
         tuple, containing secondary variable condition positions (only for ICCK)
     secondary_cond_val : :class:`numpy.ndarray`, optional
@@ -108,6 +107,13 @@ class CollocatedCokriging(Krige):
         Default: False
     fit_variogram : :class:`bool`, optional
         Whether to fit the given variogram model to the data.
+        Directional variogram fitting is triggered by setting
+        any anisotropy factor of the model to anything unequal 1
+        but the main axes of correlation are taken from the model
+        rotation angles. If the model is a spatio-temporal latlon
+        model, this will raise an error.
+        This assumes the sill to be the data variance and with
+        standard bins provided by the :any:`standard_bins` routine.
         Default: False
 
     References

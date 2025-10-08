@@ -25,9 +25,9 @@ class SimpleCollocated(CollocatedCokriging):
 
     **Markov Model I (MM1) Assumption:**
 
-    Assumes C_YZ(h) = ρ_YZ(0)·C_Z(h), meaning the cross-covariance is
-    proportional to the primary covariance structure. This requires similar
-    spatial correlation patterns between primary and secondary variables.
+    Assumes C_YZ(h) = ρ_YZ(0)·√(C_Z(h)·C_Y(h)) under MM1 where ρ_Y(h) = ρ_Z(h),
+    meaning both variables share the same spatial correlation structure. This
+    requires similar spatial correlation patterns between primary and secondary variables.
 
     **Known Limitation:**
 
@@ -65,8 +65,10 @@ class SimpleCollocated(CollocatedCokriging):
         The default is None.
     trend : :any:`None` or :class:`float` or :any:`callable`, optional
         A callable trend function. Should have the signature: f(x, [y, z, ...])
-        This is used for detrended kriging, where the trend is subtracted
+        This is used for detrended kriging, where the trended is subtracted
         from the conditions before kriging is applied.
+        This can be used for regression kriging, where the trend function
+        is determined by an external regression algorithm.
         If no normalizer is applied, this behaves equal to 'mean'.
         The default is None.
     exact : :class:`bool`, optional
@@ -74,7 +76,7 @@ class SimpleCollocated(CollocatedCokriging):
         If `False`, `cond_err` is interpreted as measurement error
         at the conditioning points and the result will be more smooth.
         Default: False
-    cond_err : :class:`str`, :class:`float` or :class:`list`, optional
+    cond_err : :class:`str`, :class :class:`float` or :class:`list`, optional
         The measurement error at the conditioning points.
         Either "nugget" to apply the model-nugget, a single value applied to
         all points or an array with individual values for each point.
@@ -160,7 +162,7 @@ class IntrinsicCollocated(CollocatedCokriging):
 
     **Markov Model I (MM1) Assumption:**
 
-    Like SimpleCollocated, assumes C_YZ(h) = ρ_YZ(0)·C_Z(h).
+    Like SimpleCollocated, assumes C_YZ(h) = ρ_YZ(0)·√(C_Z(h)·C_Y(h)).
 
     **Advantage over SimpleCollocated:**
 
@@ -209,8 +211,10 @@ class IntrinsicCollocated(CollocatedCokriging):
         The default is None.
     trend : :any:`None` or :class:`float` or :any:`callable`, optional
         A callable trend function. Should have the signature: f(x, [y, z, ...])
-        This is used for detrended kriging, where the trend is subtracted
+        This is used for detrended kriging, where the trended is subtracted
         from the conditions before kriging is applied.
+        This can be used for regression kriging, where the trend function
+        is determined by an external regression algorithm.
         If no normalizer is applied, this behaves equal to 'mean'.
         The default is None.
     exact : :class:`bool`, optional
@@ -218,7 +222,7 @@ class IntrinsicCollocated(CollocatedCokriging):
         If `False`, `cond_err` is interpreted as measurement error
         at the conditioning points and the result will be more smooth.
         Default: False
-    cond_err : :class:`str`, :class:`float` or :class:`list`, optional
+    cond_err : :class:`str`, :class :class:`float` or :class:`list`, optional
         The measurement error at the conditioning points.
         Either "nugget" to apply the model-nugget, a single value applied to
         all points or an array with individual values for each point.
