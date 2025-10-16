@@ -28,7 +28,7 @@ class CollocatedCokriging(Krige):
     Both variants assume the cross-covariance follows:
 
     .. math::
-        C_{YZ}(h) = \frac{C_{YZ}(0)}{C_Z(0)} \cdot C_Z(h)
+        C_{YZ}(h) = \\frac{C_{YZ}(0)}{C_Z(0)} \\cdot C_Z(h)
 
     where :math:`\\rho_{YZ}(0)` is the cross-correlation at zero lag. This assumption
     requires that primary and secondary variables have similar spatial
