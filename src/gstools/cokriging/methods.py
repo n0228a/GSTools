@@ -10,7 +10,6 @@ The following classes are provided
    IntrinsicCollocated
 """
 
-import numpy as np
 from gstools.cokriging.base import CollocatedCokriging
 
 __all__ = ["SimpleCollocated", "IntrinsicCollocated"]
@@ -25,20 +24,43 @@ class SimpleCollocated(CollocatedCokriging):
 
     **Markov Model I (MM1) Assumption:**
 
-    Assumes C_YZ(h) = ρ_YZ(0)·√(C_Z(h)·C_Y(h)) under MM1 where ρ_Y(h) = ρ_Z(h),
-    meaning both variables share the same spatial correlation structure. This
-    requires similar spatial correlation patterns between primary and secondary variables.
+    Assumes the cross-covariance follows the Markov Model I:
+
+    .. math::
+       C_{YZ}(h) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Z(h) \\cdot C_Y(h)}
+
+    where :math:`\\rho_Y(h) = \\rho_Z(h)`, meaning both variables share the same
+    spatial correlation structure. This requires similar spatial correlation
+    patterns between primary and secondary variables.
 
     **Known Limitation:**
 
-    MM1 can produce variance inflation where σ²_SCCK > σ²_SK in some cases.
-    For accurate variance estimation, use IntrinsicCollocated instead.
+    MM1 can produce variance inflation :math:`\\sigma^2_{\\text{SCCK}} > \\sigma^2_{\\text{SK}}`
+    in some cases. For accurate variance estimation, use :any:`IntrinsicCollocated` instead.
 
     **Estimator:**
 
-    Z*_SCCK = Z*_SK·(1-k·λ_Y0) + λ_Y0·(Y(u0)-m_Y) + k·λ_Y0·m_Z
+    The SCCK estimator is:
 
-    where k = C_YZ(0)/C_Z(0) and λ_Y0 is computed from the MM1 formula.
+    .. math::
+       Z^*_{\\text{SCCK}}(u_0) = Z^*_{\\text{SK}}(u_0) \\cdot (1 - k \\cdot \\lambda_{Y0})
+       + \\lambda_{Y0} \\cdot (Y(u_0) - m_Y) + k \\cdot \\lambda_{Y0} \\cdot m_Z
+
+    where:
+
+    .. math::
+       k = \\frac{C_{YZ}(0)}{C_Z(0)}
+
+    and the collocated weight :math:`\\lambda_{Y0}` is location-dependent:
+
+    .. math::
+       \\lambda_{Y0}(u_0) = \\frac{k \\cdot \\sigma^2_{\\text{SK}}(u_0)}
+       {C_Y(0) - k^2(C_Z(0) - \\sigma^2_{\\text{SK}}(u_0))}
+
+    **Variance:**
+
+    .. math::
+       \\sigma^2_{\\text{SCCK}}(u_0) = \\sigma^2_{\\text{SK}}(u_0) \\cdot (1 - \\lambda_{Y0}(u_0) \\cdot k)
 
     Parameters
     ----------
@@ -162,25 +184,45 @@ class IntrinsicCollocated(CollocatedCokriging):
 
     **Markov Model I (MM1) Assumption:**
 
-    Like SimpleCollocated, assumes C_YZ(h) = ρ_YZ(0)·√(C_Z(h)·C_Y(h)).
+    Like :any:`SimpleCollocated`, assumes the cross-covariance follows:
+
+    .. math::
+       C_{YZ}(h) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Z(h) \\cdot C_Y(h)}
 
     **Advantage over SimpleCollocated:**
 
     Uses improved variance formula that eliminates MM1 variance inflation:
-    σ²_ICCK = (1-ρ₀²)·σ²_SK ≤ σ²_SK
 
-    where ρ₀² = C²_YZ(0)/(C_Y(0)·C_Z(0)) is the squared correlation at zero lag.
+    .. math::
+       \\sigma^2_{\\text{ICCK}}(u_0) = (1 - \\rho_0^2) \\cdot \\sigma^2_{\\text{SK}}(u_0)
+       \\leq \\sigma^2_{\\text{SK}}(u_0)
+
+    where:
+
+    .. math::
+       \\rho_0^2 = \\frac{C_{YZ}^2(0)}{C_Y(0) \\cdot C_Z(0)}
+
+    is the squared correlation at zero lag.
 
     **Trade-off:**
 
     Requires secondary data at all primary locations (not just at estimation point).
-    Matrix size nearly doubles compared to SimpleCollocated.
+    The kriging system is effectively doubled in size compared to :any:`SimpleCollocated`.
+
+    **Estimator:**
+
+    The ICCK estimator combines primary and secondary data:
+
+    .. math::
+       Z^*_{\\text{ICCK}}(u_0) = \\sum_{i=1}^{n} \\lambda_i Z(u_i)
+       + \\sum_{i=1}^{n} \\mu_i Y(u_i) + \\lambda_{Y0} Y(u_0) + \\text{(mean terms)}
 
     **ICCK Weights:**
 
-    - λ = λ_SK (Simple Kriging weights for primaries)
-    - μ = -(C_YZ(0)/C_Y(0))·λ_SK (secondary-at-primary adjustment)
-    - λ_Y0 = C_YZ(0)/C_Y(0) (collocated weight)
+    .. math::
+       \\lambda_i &= \\lambda^{\\text{SK}}_i \\quad \\text{(Simple Kriging weights for primaries)} \\\\
+       \\mu_i &= -\\frac{C_{YZ}(0)}{C_Y(0)} \\cdot \\lambda^{\\text{SK}}_i \\quad \\text{(secondary-at-primary adjustment)} \\\\
+       \\lambda_{Y0} &= \\frac{C_{YZ}(0)}{C_Y(0)} \\quad \\text{(collocated weight)}
 
     Parameters
     ----------
