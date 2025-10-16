@@ -27,7 +27,7 @@ class SimpleCollocated(CollocatedCokriging):
     Assumes the cross-covariance follows the Markov Model I:
 
     .. math::
-       C_{YZ}(h) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Z(h) \\cdot C_Y(h)}
+        C_{YZ}(h) = \frac{C_{YZ}(0)}{C_Z(0)} \cdot C_Z(h)
 
     where :math:`\\rho_Y(h) = \\rho_Z(h)`, meaning both variables share the same
     spatial correlation structure. This requires similar spatial correlation
@@ -35,7 +35,7 @@ class SimpleCollocated(CollocatedCokriging):
 
     **Known Limitation:**
 
-    MM1 can produce variance inflation :math:`\\sigma^2_{\\text{SCCK}} > \\sigma^2_{\\text{SK}}`
+    Simple collocated cokriging can produce variance inflation :math:`\\sigma^2_{\\text{SCCK}} > \\sigma^2_{\\text{SK}}`
     in some cases. For accurate variance estimation, use :any:`IntrinsicCollocated` instead.
 
     **Estimator:**
@@ -187,7 +187,7 @@ class IntrinsicCollocated(CollocatedCokriging):
     Like :any:`SimpleCollocated`, assumes the cross-covariance follows:
 
     .. math::
-       C_{YZ}(h) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Z(h) \\cdot C_Y(h)}
+        C_{YZ}(h) = \frac{C_{YZ}(0)}{C_Z(0)} \cdot C_Z(h)
 
     **Advantage over SimpleCollocated:**
 
