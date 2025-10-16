@@ -76,11 +76,11 @@ class SimpleCollocated(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging (primary variable mean m_Z). Default: 0.0
+        Mean value for simple kriging (primary variable mean :math:`m_Z`). Default: 0.0
     secondary_mean : :class:`float`, optional
-        Mean value of the secondary variable (m_Y).
+        Mean value of the secondary variable (:math:`m_Y`).
         Required for simple collocated cokriging to properly handle
-        the anomaly-space formulation: Y(u) - m_Y.
+        the anomaly-space formulation: :math:`Y(u) - m_Y`.
         Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
@@ -242,11 +242,11 @@ class IntrinsicCollocated(CollocatedCokriging):
     secondary_var : :class:`float`
         Variance of the secondary variable. Must be positive.
     mean : :class:`float`, optional
-        Mean value for simple kriging (primary variable mean m_Z). Default: 0.0
+        Mean value for simple kriging (primary variable mean :math:`m_Z`). Default: 0.0
     secondary_mean : :class:`float`, optional
-        Mean value of the secondary variable (m_Y).
+        Mean value of the secondary variable (:math:`m_Y`).
         Required for intrinsic collocated cokriging to properly handle
-        the anomaly-space formulation: Y(u) - m_Y.
+        the anomaly-space formulation: :math:`Y(u) - m_Y`.
         Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.

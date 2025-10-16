@@ -27,9 +27,10 @@ class CollocatedCokriging(Krige):
 
     Both variants assume the cross-covariance follows:
 
-        C_YZ(h) = ρ_YZ(0) · √(C_Z(h) · C_Y(h))
+    .. math::
+       C_{YZ}(h) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Z(h) \\cdot C_Y(h)}
 
-    where ρ_YZ(0) is the cross-correlation at zero lag. This assumption
+    where :math:`\\rho_{YZ}(0)` is the cross-correlation at zero lag. This assumption
     requires that primary and secondary variables have similar spatial
     correlation structures. Violations of MM1 can lead to suboptimal
     estimates and unreliable variance.
@@ -38,11 +39,11 @@ class CollocatedCokriging(Krige):
 
     - **Simple Collocated** ("simple"):
       Uses only collocated secondary at estimation point. Simpler but
-      may show variance inflation (σ²_SCCK > σ²_SK).
+      may show variance inflation :math:`\\sigma^2_{\\text{SCCK}} > \\sigma^2_{\\text{SK}}`.
 
     - **Intrinsic Collocated** ("intrinsic"):
       Uses collocated secondary plus secondary at all primary locations.
-      Provides accurate variance: σ²_ICCK = (1-ρ₀²)·σ²_SK ≤ σ²_SK.
+      Provides accurate variance: :math:`\\sigma^2_{\\text{ICCK}} = (1-\\rho_0^2) \\cdot \\sigma^2_{\\text{SK}} \\leq \\sigma^2_{\\text{SK}}`.
 
     Parameters
     ----------
@@ -235,27 +236,13 @@ class CollocatedCokriging(Krige):
         sk_field, sk_var = super().__call__(pos=pos, **kwargs_with_var)
         secondary_data = np.asarray(secondary_data, dtype=np.double)
 
+        # apply algorithm-specific post-processing
         if self.algorithm == "simple":
             cokriging_field, cokriging_var = self._apply_simple_collocated(
                 sk_field, sk_var, secondary_data, user_return_var)
         elif self.algorithm == "intrinsic":
-            # apply collocated secondary contribution
-            collocated_contribution = self._lambda_Y0 * (
-                secondary_data - self.secondary_mean)
-            cokriging_field = sk_field + collocated_contribution
-
-            # compute intrinsic variance
-            if user_return_var:
-                C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
-                if C_Y0 * C_Z0 < 1e-15:
-                    rho_squared = 0.0
-                else:
-                    rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
-                icck_var = (1.0 - rho_squared) * sk_var
-                icck_var = np.maximum(0.0, icck_var)
-                cokriging_var = icck_var
-            else:
-                cokriging_var = None
+            cokriging_field, cokriging_var = self._apply_intrinsic_collocated(
+                sk_field, sk_var, secondary_data, user_return_var)
         else:
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
@@ -291,6 +278,34 @@ class CollocatedCokriging(Krige):
         else:
             scck_variance = None
         return scck_field, scck_variance
+
+    def _apply_intrinsic_collocated(self, sk_field, sk_var, secondary_data, return_var):
+        """
+        Apply intrinsic collocated cokriging.
+
+        Adds the collocated secondary contribution at estimation locations
+        and computes ICCK variance.
+
+        Note: The secondary-at-primary contribution is already added during
+        the kriging solve in _summate().
+        """
+        # apply collocated secondary contribution
+        collocated_contribution = self._lambda_Y0 * (
+            secondary_data - self.secondary_mean)
+        icck_field = sk_field + collocated_contribution
+
+        # compute intrinsic variance
+        if return_var:
+            C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
+            if C_Y0 * C_Z0 < 1e-15:
+                rho_squared = 0.0
+            else:
+                rho_squared = (C_YZ0**2) / (C_Y0 * C_Z0)
+            icck_var = (1.0 - rho_squared) * sk_var
+            icck_var = np.maximum(0.0, icck_var)
+        else:
+            icck_var = None
+        return icck_field, icck_var
 
     def _summate(self, field, krige_var, c_slice, k_vec, return_var):
         """Apply intrinsic collocated cokriging during kriging solve."""
