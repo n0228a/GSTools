@@ -155,12 +155,3 @@ class Correlogram(ABC):
             - MM1: C_YZ(h) = (C_YZ(0) / C_Z(0)) * C_Z(h)
             - MM2: C_YZ(h) = (C_YZ(0) / C_Y(0)) * C_Y(h)
         """
-
-    def __repr__(self):
-        """Return string representation of the correlogram."""
-        return (
-            f"{self.__class__.__name__}("
-            f"primary_model={self.primary_model.name}, "
-            f"cross_corr={self.cross_corr:.3f}, "
-            f"secondary_var={self.secondary_var:.3f})"
-        )
