@@ -5,20 +5,20 @@ Simple Collocated Cokriging
 Simple collocated cokriging uses secondary data at the estimation location
 to improve the primary variable estimate.
 
-This example demonstrates the new correlogram-based API using MarkovModel1,
-which encapsulates the Markov Model I (MM1) cross-covariance structure.
+This uses the Markov Model I (MM1) approach:
+
+.. math:: C_{YZ}(h) = \rho_{YZ}(0) \cdot \sqrt{C_Z(h) \cdot C_Y(h)}
 
 Example
 ^^^^^^^
 
-Here we compare Simple Kriging with Simple Collocated Cokriging using the
-new MarkovModel1 correlogram.
+Here we compare Simple Kriging with Simple Collocated Cokriging.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gstools import Gaussian, MarkovModel1, krige
+from gstools import Gaussian, krige
 from gstools.cokriging import SimpleCollocated
 
 # condtions
@@ -46,20 +46,16 @@ sec_at_primary = np.interp(cond_pos, sec_pos, sec_val)
 sk = krige.Simple(model, cond_pos=cond_pos, cond_val=cond_val, mean=1.0)
 sk_field, sk_var = sk(gridx, return_var=True)
 
-# Compute cross-correlation from data
 cross_corr = np.corrcoef(cond_val, sec_at_primary)[0, 1]
-
-# Create MarkovModel1 correlogram (NEW API)
-correlogram = MarkovModel1(
-    primary_model=model,
+scck = SimpleCollocated(
+    model,
+    cond_pos=cond_pos,
+    cond_val=cond_val,
     cross_corr=cross_corr,
     secondary_var=np.var(sec_val),
-    primary_mean=1.0,
+    mean=1.0,
     secondary_mean=np.mean(sec_val),
 )
-
-# Simple Collocated Cokriging with new API
-scck = SimpleCollocated(correlogram, cond_pos=cond_pos, cond_val=cond_val)
 scck_field, scck_var = scck(gridx, secondary_data=sec_grid, return_var=True)
 
 ###############################################################################

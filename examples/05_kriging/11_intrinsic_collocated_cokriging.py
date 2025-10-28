@@ -5,8 +5,6 @@ Intrinsic Collocated Cokriging
 Intrinsic Collocated Cokriging (ICCK) improves variance estimation
 compared to Simple Collocated Cokriging.
 
-This example demonstrates the new correlogram-based API using MarkovModel1.
-
 The variance formula is:
 
 .. math:: \sigma^2_{ICCK} = (1 - \rho_0^2) \cdot \sigma^2_{SK}
@@ -14,14 +12,13 @@ The variance formula is:
 Example
 ^^^^^^^
 
-Here we compare Simple Kriging with Intrinsic Collocated Cokriging using the
-new MarkovModel1 correlogram.
+Here we compare Simple Kriging with Intrinsic Collocated Cokriging.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gstools import Gaussian, MarkovModel1, krige
+from gstools import Gaussian, krige
 from gstools.cokriging import IntrinsicCollocated
 
 # condtions
@@ -49,25 +46,17 @@ sec_at_primary = np.interp(cond_pos, sec_pos, sec_val)
 sk = krige.Simple(model, cond_pos=cond_pos, cond_val=cond_val, mean=1.0)
 sk_field, sk_var = sk(gridx, return_var=True)
 
-# Compute cross-correlation from data
 cross_corr = np.corrcoef(cond_val, sec_at_primary)[0, 1]
-
-# Create MarkovModel1 correlogram (NEW API)
-correlogram = MarkovModel1(
-    primary_model=model,
-    cross_corr=cross_corr,
-    secondary_var=np.var(sec_val),
-    primary_mean=1.0,
-    secondary_mean=np.mean(sec_val),
-)
-
-# Intrinsic Collocated Cokriging with new API
 icck = IntrinsicCollocated(
-    correlogram,
+    model,
     cond_pos=cond_pos,
     cond_val=cond_val,
     secondary_cond_pos=cond_pos,
     secondary_cond_val=sec_at_primary,
+    cross_corr=cross_corr,
+    secondary_var=np.var(sec_val),
+    mean=1.0,
+    secondary_mean=np.mean(sec_val),
 )
 icck_field, icck_var = icck(gridx, secondary_data=sec_grid, return_var=True)
 
