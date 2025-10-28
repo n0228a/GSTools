@@ -10,6 +10,8 @@ The following classes are provided
 """
 
 import numpy as np
+
+from gstools.cokriging.correlogram import Correlogram
 from gstools.krige.base import Krige
 
 __all__ = ["CollocatedCokriging"]
@@ -17,23 +19,17 @@ __all__ = ["CollocatedCokriging"]
 
 class CollocatedCokriging(Krige):
     """
-    Collocated cokriging.
+    Collocated cokriging base class using Correlogram models.
 
     Collocated cokriging uses secondary data at the estimation location
     to improve the primary variable estimate. This implementation supports
     both Simple Collocated Cokriging and Intrinsic Collocated Cokriging.
 
-    **Important Assumption - Markov Model I (MM1):**
+    **Cross-Covariance Modeling:**
 
-    Both variants assume the cross-covariance follows:
-
-    .. math::
-        C_{YZ}(h) = \\frac{C_{YZ}(0)}{C_Z(0)} \\cdot C_Z(h)
-
-    where :math:`\\rho_{YZ}(0)` is the cross-correlation at zero lag. This assumption
-    requires that primary and secondary variables have similar spatial
-    correlation structures. Violations of MM1 can lead to suboptimal
-    estimates and unreliable variance.
+    This class uses a :any:`Correlogram` object to define the spatial
+    relationship between primary and secondary variables. Different correlogram
+    models (MM1, MM2, etc.) make different assumptions about cross-covariance.
 
     **Algorithm Selection:**
 
@@ -47,27 +43,19 @@ class CollocatedCokriging(Krige):
 
     Parameters
     ----------
-    model : :any:`CovModel`
-        Covariance model for the primary variable.
+    correlogram : :any:`Correlogram`
+        Correlogram object defining the cross-covariance structure between
+        primary and secondary variables (e.g., :any:`MarkovModel1`).
     cond_pos : :class:`list`
         tuple, containing the given condition positions (x, [y, z])
     cond_val : :class:`numpy.ndarray`
         the values of the primary variable conditions (nan values will be ignored)
-    cross_corr : :class:`float`
-        Cross-correlation coefficient between primary and secondary variables
-        at zero lag. Must be in [-1, 1].
-    secondary_var : :class:`float`
-        Variance of the secondary variable. Must be positive.
     algorithm : :class:`str`
         Cokriging algorithm to use. Either "simple" (SCCK) or "intrinsic" (ICCK).
     secondary_cond_pos : :class:`list`, optional
         tuple, containing secondary variable condition positions (only for ICCK)
     secondary_cond_val : :class:`numpy.ndarray`, optional
         values of secondary variable at primary locations (only for ICCK)
-    mean : :class:`float`, optional
-        Mean value for simple kriging. Default: 0.0
-    secondary_mean : :class:`float`, optional
-        Mean value of the secondary variable. Default: 0.0
     normalizer : :any:`None` or :any:`Normalizer`, optional
         Normalizer to be applied to the input data to gain normality.
         The default is None.
@@ -128,16 +116,12 @@ class CollocatedCokriging(Krige):
 
     def __init__(
         self,
-        model,
+        correlogram,
         cond_pos,
         cond_val,
-        cross_corr,
-        secondary_var,
         algorithm,
         secondary_cond_pos=None,
         secondary_cond_val=None,
-        mean=0.0,
-        secondary_mean=0.0,
         normalizer=None,
         trend=None,
         exact=False,
@@ -147,22 +131,18 @@ class CollocatedCokriging(Krige):
         fit_normalizer=False,
         fit_variogram=False,
     ):
+        # Validate correlogram
+        if not isinstance(correlogram, Correlogram):
+            raise TypeError(
+                f"correlogram must be a Correlogram instance, got {type(correlogram)}"
+            )
+        self.correlogram = correlogram
+
         # validate algorithm parameter
         if algorithm not in ["simple", "intrinsic"]:
             raise ValueError(
                 "algorithm must be 'simple' or 'intrinsic'")
         self.algorithm = algorithm
-
-        # validate cross-correlation and secondary variance
-        self.cross_corr = float(cross_corr)
-        if not -1.0 <= self.cross_corr <= 1.0:
-            raise ValueError("cross_corr must be in [-1, 1]")
-
-        self.secondary_var = float(secondary_var)
-        if self.secondary_var <= 0:
-            raise ValueError("secondary_var must be positive")
-
-        self.secondary_mean = float(secondary_mean)
 
         # handle secondary conditioning data (required for intrinsic)
         if algorithm == "intrinsic":
@@ -184,10 +164,10 @@ class CollocatedCokriging(Krige):
 
         # initialize as simple kriging (unbiased=False)
         super().__init__(
-            model=model,
+            model=correlogram.primary_model,
             cond_pos=cond_pos,
             cond_val=cond_val,
-            mean=mean,
+            mean=correlogram.primary_mean,
             unbiased=False,  # Simple kriging base
             normalizer=normalizer,
             trend=trend,
@@ -267,7 +247,7 @@ class CollocatedCokriging(Krige):
         # apply collocated cokriging estimator
         scck_field = (
             sk_field * (1 - k * collocated_weights) +
-            collocated_weights * (secondary_data - self.secondary_mean) +
+            collocated_weights * (secondary_data - self.correlogram.secondary_mean) +
             k * collocated_weights * self.mean
         )
 
@@ -291,7 +271,7 @@ class CollocatedCokriging(Krige):
         """
         # apply collocated secondary contribution
         collocated_contribution = self._lambda_Y0 * (
-            secondary_data - self.secondary_mean)
+            secondary_data - self.correlogram.secondary_mean)
         icck_field = sk_field + collocated_contribution
 
         # compute intrinsic variance
@@ -327,7 +307,7 @@ class CollocatedCokriging(Krige):
             mu_weights = -(C_YZ0 / C_Y0) * lambda_weights
             lambda_Y0 = C_YZ0 / C_Y0
 
-            secondary_residuals = self.secondary_cond_val - self.secondary_mean
+            secondary_residuals = self.secondary_cond_val - self.correlogram.secondary_mean
             if sk_weights.ndim == 1:
                 secondary_at_primary = np.sum(mu_weights * secondary_residuals)
             else:
@@ -343,8 +323,9 @@ class CollocatedCokriging(Krige):
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
     def _compute_covariances(self):
-        """Compute covariances at zero lag."""
-        C_Z0 = self.model.sill
-        C_Y0 = self.secondary_var
-        C_YZ0 = self.cross_corr * np.sqrt(C_Z0 * C_Y0)
-        return C_Z0, C_Y0, C_YZ0
+        """
+        Compute covariances at zero lag.
+
+        Delegates to the correlogram object.
+        """
+        return self.correlogram.compute_covariances()
