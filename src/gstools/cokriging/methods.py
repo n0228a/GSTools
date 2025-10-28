@@ -112,31 +112,6 @@ class SimpleCollocated(CollocatedCokriging):
         Whether to fit the given variogram model to the data.
         Default: False
 
-    Examples
-    --------
-    >>> import gstools as gs
-    >>> import numpy as np
-    >>>
-    >>> # Define primary model and correlogram
-    >>> model = gs.Gaussian(dim=1, var=0.5, len_scale=2.0)
-    >>> correlogram = gs.MarkovModel1(
-    ...     primary_model=model,
-    ...     cross_corr=0.8,
-    ...     secondary_var=1.5,
-    ...     primary_mean=1.0,
-    ...     secondary_mean=0.5
-    ... )
-    >>>
-    >>> # Setup cokriging
-    >>> cond_pos = [0.5, 2.1, 3.8]
-    >>> cond_val = [0.8, 1.2, 1.8]
-    >>> scck = gs.SimpleCollocated(correlogram, cond_pos, cond_val)
-    >>>
-    >>> # Interpolate
-    >>> gridx = np.linspace(0.0, 5.0, 51)
-    >>> secondary_data = np.ones(51) * 0.5  # secondary values at gridx
-    >>> field = scck(gridx, secondary_data=secondary_data)
-
     References
     ----------
     .. [Samson2020] Samson, M., & Deutsch, C. V. (2020). Collocated Cokriging.
@@ -183,79 +158,6 @@ class SimpleCollocated(CollocatedCokriging):
             fit_normalizer=fit_normalizer,
             fit_variogram=fit_variogram,
         )
-
-    @classmethod
-    def from_parameters(
-        cls,
-        model,
-        cond_pos,
-        cond_val,
-        cross_corr,
-        secondary_var,
-        mean=0.0,
-        secondary_mean=0.0,
-        **kwargs
-    ):
-        """
-        Create SimpleCollocated from individual parameters (backward compatible).
-
-        .. deprecated:: 1.6
-           Use :any:`MarkovModel1` directly instead. This method exists for
-           backward compatibility and will be removed in a future version.
-
-        Parameters
-        ----------
-        model : :any:`CovModel`
-            Covariance model for the primary variable.
-        cond_pos : :class:`list`
-            tuple, containing the given condition positions (x, [y, z])
-        cond_val : :class:`numpy.ndarray`
-            the values of the conditions (nan values will be ignored)
-        cross_corr : :class:`float`
-            Cross-correlation coefficient between primary and secondary variables
-            at zero lag. Must be in [-1, 1].
-        secondary_var : :class:`float`
-            Variance of the secondary variable. Must be positive.
-        mean : :class:`float`, optional
-            Mean value for simple kriging (primary variable mean). Default: 0.0
-        secondary_mean : :class:`float`, optional
-            Mean value of the secondary variable. Default: 0.0
-        **kwargs
-            Additional keyword arguments passed to SimpleCollocated.
-
-        Returns
-        -------
-        SimpleCollocated
-            Instance of SimpleCollocated with MarkovModel1 correlogram.
-
-        Examples
-        --------
-        >>> import gstools as gs
-        >>> model = gs.Gaussian(dim=1, var=0.5, len_scale=2.0)
-        >>> scck = gs.SimpleCollocated.from_parameters(
-        ...     model, cond_pos=[0.5, 2.1], cond_val=[0.8, 1.2],
-        ...     cross_corr=0.8, secondary_var=1.5,
-        ...     mean=1.0, secondary_mean=0.5
-        ... )
-        """
-        warnings.warn(
-            "SimpleCollocated.from_parameters() is deprecated. "
-            "Use MarkovModel1 directly:\n"
-            "  correlogram = gs.MarkovModel1(primary_model=model, cross_corr=..., ...)\n"
-            "  scck = gs.SimpleCollocated(correlogram, cond_pos, cond_val)",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        correlogram = MarkovModel1(
-            primary_model=model,
-            cross_corr=cross_corr,
-            secondary_var=secondary_var,
-            primary_mean=mean,
-            secondary_mean=secondary_mean
-        )
-
-        return cls(correlogram, cond_pos, cond_val, **kwargs)
 
 
 class IntrinsicCollocated(CollocatedCokriging):
@@ -363,36 +265,6 @@ class IntrinsicCollocated(CollocatedCokriging):
         Whether to fit the given variogram model to the data.
         Default: False
 
-    Examples
-    --------
-    >>> import gstools as gs
-    >>> import numpy as np
-    >>>
-    >>> # Define primary model and correlogram
-    >>> model = gs.Gaussian(dim=1, var=0.5, len_scale=2.0)
-    >>> correlogram = gs.MarkovModel1(
-    ...     primary_model=model,
-    ...     cross_corr=0.8,
-    ...     secondary_var=1.5,
-    ...     primary_mean=1.0,
-    ...     secondary_mean=0.5
-    ... )
-    >>>
-    >>> # Setup cokriging
-    >>> cond_pos = [0.5, 2.1, 3.8]
-    >>> cond_val = [0.8, 1.2, 1.8]
-    >>> sec_at_primary = [0.4, 0.6, 0.7]
-    >>> icck = gs.IntrinsicCollocated(
-    ...     correlogram, cond_pos, cond_val,
-    ...     secondary_cond_pos=cond_pos,
-    ...     secondary_cond_val=sec_at_primary
-    ... )
-    >>>
-    >>> # Interpolate
-    >>> gridx = np.linspace(0.0, 5.0, 51)
-    >>> secondary_data = np.ones(51) * 0.5
-    >>> field = icck(gridx, secondary_data=secondary_data)
-
     References
     ----------
     .. [Samson2020] Samson, M., & Deutsch, C. V. (2020). Collocated Cokriging.
@@ -423,7 +295,6 @@ class IntrinsicCollocated(CollocatedCokriging):
             raise TypeError(
                 f"First argument must be a Correlogram instance. "
                 f"Got {type(correlogram).__name__}. "
-                f"For backward compatibility, use IntrinsicCollocated.from_parameters() instead."
             )
 
         # Initialize using base class with intrinsic algorithm
@@ -442,89 +313,4 @@ class IntrinsicCollocated(CollocatedCokriging):
             pseudo_inv_type=pseudo_inv_type,
             fit_normalizer=fit_normalizer,
             fit_variogram=fit_variogram,
-        )
-
-    @classmethod
-    def from_parameters(
-        cls,
-        model,
-        cond_pos,
-        cond_val,
-        secondary_cond_pos,
-        secondary_cond_val,
-        cross_corr,
-        secondary_var,
-        mean=0.0,
-        secondary_mean=0.0,
-        **kwargs
-    ):
-        """
-        Create IntrinsicCollocated from individual parameters (backward compatible).
-
-        .. deprecated:: 1.6
-           Use :any:`MarkovModel1` directly instead. This method exists for
-           backward compatibility and will be removed in a future version.
-
-        Parameters
-        ----------
-        model : :any:`CovModel`
-            Covariance model for the primary variable.
-        cond_pos : :class:`list`
-            tuple, containing the given condition positions (x, [y, z])
-        cond_val : :class:`numpy.ndarray`
-            the values of the primary variable conditions
-        secondary_cond_pos : :class:`list`
-            tuple, containing the secondary variable condition positions
-        secondary_cond_val : :class:`numpy.ndarray`
-            the values of the secondary variable conditions at primary locations
-        cross_corr : :class:`float`
-            Cross-correlation coefficient between primary and secondary variables
-            at zero lag. Must be in [-1, 1].
-        secondary_var : :class:`float`
-            Variance of the secondary variable. Must be positive.
-        mean : :class:`float`, optional
-            Mean value for simple kriging (primary variable mean). Default: 0.0
-        secondary_mean : :class:`float`, optional
-            Mean value of the secondary variable. Default: 0.0
-        **kwargs
-            Additional keyword arguments passed to IntrinsicCollocated.
-
-        Returns
-        -------
-        IntrinsicCollocated
-            Instance of IntrinsicCollocated with MarkovModel1 correlogram.
-
-        Examples
-        --------
-        >>> import gstools as gs
-        >>> model = gs.Gaussian(dim=1, var=0.5, len_scale=2.0)
-        >>> icck = gs.IntrinsicCollocated.from_parameters(
-        ...     model, cond_pos=[0.5, 2.1], cond_val=[0.8, 1.2],
-        ...     secondary_cond_pos=[0.5, 2.1], secondary_cond_val=[0.4, 0.6],
-        ...     cross_corr=0.8, secondary_var=1.5,
-        ...     mean=1.0, secondary_mean=0.5
-        ... )
-        """
-        warnings.warn(
-            "IntrinsicCollocated.from_parameters() is deprecated. "
-            "Use MarkovModel1 directly:\n"
-            "  correlogram = gs.MarkovModel1(primary_model=model, cross_corr=..., ...)\n"
-            "  icck = gs.IntrinsicCollocated(correlogram, cond_pos, cond_val, "
-            "secondary_cond_pos, secondary_cond_val)",
-            DeprecationWarning,
-            stacklevel=2
-        )
-
-        correlogram = MarkovModel1(
-            primary_model=model,
-            cross_corr=cross_corr,
-            secondary_var=secondary_var,
-            primary_mean=mean,
-            secondary_mean=secondary_mean
-        )
-
-        return cls(
-            correlogram, cond_pos, cond_val,
-            secondary_cond_pos, secondary_cond_val,
-            **kwargs
         )

@@ -4,8 +4,7 @@ GStools subpackage providing correlogram models for collocated cokriging.
 .. currentmodule:: gstools.cokriging.correlogram
 
 Correlogram models define the cross-covariance structure between primary
-and secondary variables in collocated cokriging. Different models make
-different assumptions about the spatial relationship between variables.
+and secondary variables in collocated cokriging.
 
 Base Class
 ^^^^^^^^^^

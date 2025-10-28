@@ -1,14 +1,3 @@
-"""
-GStools subpackage providing correlogram models for collocated cokriging.
-
-.. currentmodule:: gstools.cokriging.correlogram.base
-
-The following classes are provided
-
-.. autosummary::
-   Correlogram
-"""
-
 from abc import ABC, abstractmethod
 
 __all__ = ["Correlogram"]
@@ -56,8 +45,8 @@ class Correlogram(ABC):
     Notes
     -----
     Subclasses must implement:
-        - :any:`compute_covariances`: Returns (C_Z0, C_Y0, C_YZ0) at zero lag
-        - :any:`cross_covariance`: Computes C_YZ(h) at distance h
+        - :any:`compute_covariances`: Returns (:math:`C_Z(0)`, :math:`C_Y(0)`, :math:`C_{YZ}(0)`) at zero lag
+        - :any:`cross_covariance`: Computes :math:`C_{YZ}(h)` at distance :math:`h`
 
     Examples
     --------
@@ -118,11 +107,12 @@ class Correlogram(ABC):
         Returns
         -------
         C_Z0 : :class:`float`
-            Primary variable variance (covariance at zero lag).
+            Primary variable variance :math:`C_Z(0)`.
         C_Y0 : :class:`float`
-            Secondary variable variance (covariance at zero lag).
+            Secondary variable variance :math:`C_Y(0)`.
         C_YZ0 : :class:`float`
-            Cross-covariance between primary and secondary at zero lag.
+            Cross-covariance between primary and secondary at zero lag
+            :math:`C_{YZ}(0)`.
 
         Notes
         -----
@@ -134,7 +124,7 @@ class Correlogram(ABC):
     @abstractmethod
     def cross_covariance(self, h):
         """
-        Compute cross-covariance C_YZ(h) at distance h.
+        Compute cross-covariance :math:`C_{YZ}(h)` at distance :math:`h`.
 
         Parameters
         ----------
@@ -144,12 +134,12 @@ class Correlogram(ABC):
         Returns
         -------
         C_YZ_h : :class:`float` or :class:`numpy.ndarray`
-            Cross-covariance at distance h.
+            Cross-covariance at distance :math:`h`.
 
         Notes
         -----
         This is the key method that differentiates correlogram models.
         For example:
-            - MM1: C_YZ(h) = (C_YZ(0) / C_Z(0)) * C_Z(h)
-            - MM2: C_YZ(h) = (C_YZ(0) / C_Y(0)) * C_Y(h)
+            - MM1: :math:`C_{YZ}(h) = (C_{YZ}(0) / C_Z(0)) * C_Z(h)`
+            - MM2: :math:`C_{YZ}(h) = (C_{YZ}(0) / C_Y(0)) * C_Y(h)`
         """
