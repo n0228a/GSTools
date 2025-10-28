@@ -24,8 +24,8 @@ Correlogram Models
 """
 
 from gstools.cokriging.base import CollocatedCokriging
-from gstools.cokriging.methods import IntrinsicCollocated, SimpleCollocated
 from gstools.cokriging.correlogram import Correlogram, MarkovModel1
+from gstools.cokriging.methods import IntrinsicCollocated, SimpleCollocated
 
 __all__ = [
     "CollocatedCokriging",

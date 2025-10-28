@@ -10,8 +10,9 @@ The following classes are provided
 """
 
 import numpy as np
-from gstools.krige.base import Krige
+
 from gstools.cokriging.correlogram import Correlogram
+from gstools.krige.base import Krige
 
 __all__ = ["CollocatedCokriging"]
 

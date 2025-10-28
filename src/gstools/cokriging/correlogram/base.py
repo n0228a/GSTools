@@ -11,8 +11,6 @@ The following classes are provided
 
 from abc import ABC, abstractmethod
 
-import numpy as np
-
 __all__ = ["Correlogram"]
 
 
