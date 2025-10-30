@@ -46,6 +46,7 @@ Collocated cokriging methods for multivariate estimation
 .. autosummary::
    SimpleCollocated
    IntrinsicCollocated
+   MarkovModel1
 
 Spatial Random Field
 ^^^^^^^^^^^^^^^^^^^^
@@ -145,7 +146,7 @@ Misc
 """
 
 # Hooray!
-from gstools import (
+from gstools import ( # noqa: I001
     config,
     covmodel,
     field,
@@ -156,6 +157,11 @@ from gstools import (
     tools,
     transform,
     variogram,
+)
+from gstools.cokriging import (
+    IntrinsicCollocated,
+    MarkovModel1,
+    SimpleCollocated,
 )
 from gstools.covmodel import (
     Circular,
@@ -181,7 +187,6 @@ from gstools.covmodel import (
 )
 from gstools.field import PGS, SRF, CondSRF
 from gstools.krige import Krige
-from gstools.cokriging import SimpleCollocated, IntrinsicCollocated
 from gstools.tools import (
     DEGREE_SCALE,
     EARTH_RADIUS,
@@ -249,6 +254,7 @@ __all__ += [
     "Krige",
     "SimpleCollocated",
     "IntrinsicCollocated",
+    "MarkovModel1",
     "SRF",
     "CondSRF",
     "PGS",
