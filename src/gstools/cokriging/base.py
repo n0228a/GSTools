@@ -22,24 +22,13 @@ class CollocatedCokriging(Krige):
     Collocated cokriging base class using Correlogram models.
 
     Collocated cokriging uses secondary data at the estimation location
-    to improve the primary variable estimate. This implementation supports
-    both Simple Collocated Cokriging and Intrinsic Collocated Cokriging.
+    to improve the primary variable estimate. The cross-covariance structure
+    is defined by a :any:`Correlogram` object (e.g., :any:`MarkovModel1`).
 
-    **Cross-Covariance Modeling:**
-
-    This class uses a :any:`Correlogram` object to define the spatial
-    relationship between primary and secondary variables. Different correlogram
-    models (MM1, MM2, etc.) make different assumptions about cross-covariance.
-
-    **Algorithm Selection:**
-
-    - **Simple Collocated** ("simple"):
-      Uses only collocated secondary at estimation point. Simpler but
-      may show variance inflation :math:`\\sigma^2_{\\text{SCCK}} > \\sigma^2_{\\text{SK}}`.
-
-    - **Intrinsic Collocated** ("intrinsic"):
-      Uses collocated secondary plus secondary at all primary locations.
-      Provides accurate variance: :math:`\\sigma^2_{\\text{ICCK}} = (1-\\rho_0^2) \\cdot \\sigma^2_{\\text{SK}} \\leq \\sigma^2_{\\text{SK}}`.
+    Two algorithms are supported: Simple Collocated ("simple") uses only
+    collocated secondary at the estimation point, while Intrinsic Collocated
+    ("intrinsic") additionally uses secondary data at all primary locations
+    for more accurate variance estimation.
 
     Parameters
     ----------

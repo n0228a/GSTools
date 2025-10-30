@@ -44,22 +44,8 @@ class Correlogram(ABC):
 
     Notes
     -----
-    Subclasses must implement:
-        - :any:`compute_covariances`: Returns (:math:`C_Z(0)`, :math:`C_Y(0)`, :math:`C_{YZ}(0)`) at zero lag
-        - :any:`cross_covariance`: Computes :math:`C_{YZ}(h)` at distance :math:`h`
-
-    Examples
-    --------
-    >>> # Example with MarkovModel1 (subclass)
-    >>> import gstools as gs
-    >>> correlogram = gs.MarkovModel1(
-    ...     primary_model=gs.Gaussian(dim=1, var=0.5, len_scale=2),
-    ...     cross_corr=0.8,
-    ...     secondary_var=1.5,
-    ...     primary_mean=1.0,
-    ...     secondary_mean=0.5
-    ... )
-    >>> C_Z0, C_Y0, C_YZ0 = correlogram.compute_covariances()
+    Subclasses must implement :any:`compute_covariances` and
+    :any:`cross_covariance` to define the cross-covariance structure.
     """
 
     def __init__(
@@ -139,7 +125,6 @@ class Correlogram(ABC):
         Notes
         -----
         This is the key method that differentiates correlogram models.
-        For example:
-            - MM1: :math:`C_{YZ}(h) = (C_{YZ}(0) / C_Z(0)) * C_Z(h)`
-            - MM2: :math:`C_{YZ}(h) = (C_{YZ}(0) / C_Y(0)) * C_Y(h)`
+        For example, MM1 uses the primary variable's spatial structure
+        while MM2 would use the secondary variable's structure.
         """

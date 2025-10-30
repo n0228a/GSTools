@@ -26,24 +26,13 @@ class MarkovModel1(Correlogram):
     .. math::
         C_{YZ}(h) = \\frac{C_{YZ}(0)}{C_Z(0)} \\cdot C_Z(h)
 
-    where:
-        - :math:`C_{YZ}(h)` is the cross-covariance at distance h
-        - :math:`C_{YZ}(0)` is the cross-covariance at zero lag
-        - :math:`C_Z(h)` is the primary variable's covariance at distance h
-        - :math:`C_Z(0)` is the primary variable's variance
+    where :math:`C_{YZ}(h)` is the cross-covariance at distance h,
+    :math:`C_{YZ}(0)` is the cross-covariance at zero lag,
+    :math:`C_Z(h)` is the primary variable's covariance at distance h,
+    and :math:`C_Z(0)` is the primary variable's variance.
 
-    **Key Assumption**: This implies that both variables share the same
-    spatial correlation structure: :math:`\\rho_Y(h) = \\rho_Z(h)`.
-
-    **When to Use**:
-        - Primary variable has well-defined spatial structure
-        - Secondary variable tracks primary's spatial patterns
-        - Most common choice for collocated cokriging
-
-    **Limitations**:
-        - Assumes identical spatial ranges for both variables
-        - May be suboptimal if secondary has different range/structure
-        - For those cases, consider MM2 (future implementation)
+    This implies that both variables share the same spatial correlation
+    structure: :math:`\\rho_Y(h) = \\rho_Z(h)`.
 
     Parameters
     ----------
@@ -96,12 +85,6 @@ class MarkovModel1(Correlogram):
         C_YZ0 : :class:`float`
             Cross-covariance at zero lag, computed as:
             :math:`C_{YZ}(0) = \\rho_{YZ}(0) \\cdot \\sqrt{C_Y(0) \\cdot C_Z(0)}`
-
-        Notes
-        -----
-        The cross-covariance at zero lag is derived from the cross-correlation
-        and the variances of both variables. This ensures consistency with
-        the correlation coefficient definition.
         """
         C_Z0 = self.primary_model.sill
         C_Y0 = self.secondary_var
@@ -122,15 +105,6 @@ class MarkovModel1(Correlogram):
         C_YZ_h : :class:`float` or :class:`numpy.ndarray`
             Cross-covariance at distance h, computed using MM1:
             :math:`C_{YZ}(h) = \\frac{C_{YZ}(0)}{C_Z(0)} \\cdot C_Z(h)`
-
-        Notes
-        -----
-        The MM1 formula uses the primary variable's covariance function
-        to model the cross-covariance. This assumes both variables have
-        the same spatial correlation structure (same range, same shape).
-
-        The ratio :math:`k = C_{YZ}(0) / C_Z(0)` acts as a scaling factor
-        that relates the primary covariance to the cross-covariance.
         """
         C_Z0, C_Y0, C_YZ0 = self.compute_covariances()
 
