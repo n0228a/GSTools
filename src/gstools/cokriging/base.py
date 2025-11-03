@@ -129,8 +129,7 @@ class CollocatedCokriging(Krige):
 
         # validate algorithm parameter
         if algorithm not in ["simple", "intrinsic"]:
-            raise ValueError(
-                "algorithm must be 'simple' or 'intrinsic'")
+            raise ValueError("algorithm must be 'simple' or 'intrinsic'")
         self.algorithm = algorithm
 
         # handle secondary conditioning data (required for intrinsic)
@@ -141,7 +140,8 @@ class CollocatedCokriging(Krige):
                 )
             self.secondary_cond_pos = secondary_cond_pos
             self.secondary_cond_val = np.asarray(
-                secondary_cond_val, dtype=np.double)
+                secondary_cond_val, dtype=np.double
+            )
 
             if len(self.secondary_cond_val) != len(cond_val):
                 raise ValueError(
@@ -195,12 +195,13 @@ class CollocatedCokriging(Krige):
         """
         if secondary_data is None:
             raise ValueError(
-                "secondary_data required for collocated cokriging")
+                "secondary_data required for collocated cokriging"
+            )
 
-        user_return_var = kwargs.get('return_var', True)
+        user_return_var = kwargs.get("return_var", True)
         # always get variance for weight calculation
         kwargs_with_var = kwargs.copy()
-        kwargs_with_var['return_var'] = True
+        kwargs_with_var["return_var"] = True
         # get simple kriging results
         sk_field, sk_var = super().__call__(pos=pos, **kwargs_with_var)
         secondary_data = np.asarray(secondary_data, dtype=np.double)
@@ -208,10 +209,12 @@ class CollocatedCokriging(Krige):
         # apply algorithm-specific post-processing
         if self.algorithm == "simple":
             cokriging_field, cokriging_var = self._apply_simple_collocated(
-                sk_field, sk_var, secondary_data, user_return_var)
+                sk_field, sk_var, secondary_data, user_return_var
+            )
         elif self.algorithm == "intrinsic":
             cokriging_field, cokriging_var = self._apply_intrinsic_collocated(
-                sk_field, sk_var, secondary_data, user_return_var)
+                sk_field, sk_var, secondary_data, user_return_var
+            )
         else:
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
@@ -219,7 +222,9 @@ class CollocatedCokriging(Krige):
             return cokriging_field, cokriging_var
         return cokriging_field
 
-    def _apply_simple_collocated(self, sk_field, sk_var, secondary_data, return_var):
+    def _apply_simple_collocated(
+        self, sk_field, sk_var, secondary_data, return_var
+    ):
         """Apply simple collocated cokriging."""
         C_Z0, C_Y0, C_YZ0 = self._compute_covariances()
         k = C_YZ0 / C_Z0
@@ -228,16 +233,15 @@ class CollocatedCokriging(Krige):
         numerator = k * sk_var
         denominator = C_Y0 - (k**2) * (C_Z0 - sk_var)
         collocated_weights = np.where(
-            np.abs(denominator) < 1e-15,
-            0.0,
-            numerator / denominator
+            np.abs(denominator) < 1e-15, 0.0, numerator / denominator
         )
 
         # apply collocated cokriging estimator
         scck_field = (
-            sk_field * (1 - k * collocated_weights) +
-            collocated_weights * (secondary_data - self.correlogram.secondary_mean) +
-            k * collocated_weights * self.mean
+            sk_field * (1 - k * collocated_weights)
+            + collocated_weights
+            * (secondary_data - self.correlogram.secondary_mean)
+            + k * collocated_weights * self.mean
         )
 
         if return_var:
@@ -248,7 +252,9 @@ class CollocatedCokriging(Krige):
             scck_variance = None
         return scck_field, scck_variance
 
-    def _apply_intrinsic_collocated(self, sk_field, sk_var, secondary_data, return_var):
+    def _apply_intrinsic_collocated(
+        self, sk_field, sk_var, secondary_data, return_var
+    ):
         """
         Apply intrinsic collocated cokriging.
 
@@ -260,7 +266,8 @@ class CollocatedCokriging(Krige):
         """
         # apply collocated secondary contribution
         collocated_contribution = self._lambda_Y0 * (
-            secondary_data - self.correlogram.secondary_mean)
+            secondary_data - self.correlogram.secondary_mean
+        )
         icck_field = sk_field + collocated_contribution
 
         # compute intrinsic variance
@@ -292,16 +299,19 @@ class CollocatedCokriging(Krige):
                 super()._summate(field, krige_var, c_slice, k_vec, return_var)
                 return
 
-            lambda_weights = sk_weights[:self.cond_no]
+            lambda_weights = sk_weights[: self.cond_no]
             mu_weights = -(C_YZ0 / C_Y0) * lambda_weights
             lambda_Y0 = C_YZ0 / C_Y0
 
-            secondary_residuals = self.secondary_cond_val - self.correlogram.secondary_mean
+            secondary_residuals = (
+                self.secondary_cond_val - self.correlogram.secondary_mean
+            )
             if sk_weights.ndim == 1:
                 secondary_at_primary = np.sum(mu_weights * secondary_residuals)
             else:
                 secondary_at_primary = np.sum(
-                    mu_weights * secondary_residuals[:, None], axis=0)
+                    mu_weights * secondary_residuals[:, None], axis=0
+                )
 
             self._lambda_Y0 = lambda_Y0
             self._secondary_at_primary = secondary_at_primary

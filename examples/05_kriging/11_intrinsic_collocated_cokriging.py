@@ -36,8 +36,8 @@ model = Gaussian(dim=1, var=0.5, len_scale=2.0)
 
 sec_pos = np.linspace(0, 15, 31)
 primary_trend = np.interp(sec_pos, cond_pos, cond_val)
-gap_feature = -1.6 * np.exp(-((sec_pos - 10.0) / 2.0) ** 2)
-gap_feature2 = -0.95 * np.exp(-((sec_pos - 4.0) / 2.0) ** 2)
+gap_feature = -1.6 * np.exp(-(((sec_pos - 10.0) / 2.0) ** 2))
+gap_feature2 = -0.95 * np.exp(-(((sec_pos - 4.0) / 2.0) ** 2))
 sec_val = 0.99 * primary_trend + gap_feature + gap_feature2
 
 sec_grid = np.interp(gridx, sec_pos, sec_val)
@@ -76,7 +76,13 @@ icck_field, icck_var = icck(gridx, secondary_data=sec_grid, return_var=True)
 fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
 
 ax[0].scatter(cond_pos, cond_val, color="red", label="Primary data")
-ax[0].scatter(cond_pos, sec_at_primary, color="blue", marker="s", label="Secondary at primary")
+ax[0].scatter(
+    cond_pos,
+    sec_at_primary,
+    color="blue",
+    marker="s",
+    label="Secondary at primary",
+)
 ax[0].plot(sec_pos, sec_val, "b-", alpha=0.6, label="Secondary data")
 ax[0].legend()
 

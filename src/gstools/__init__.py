@@ -146,7 +146,7 @@ Misc
 """
 
 # Hooray!
-from gstools import ( # noqa: I001
+from gstools import (  # noqa: I001
     config,
     covmodel,
     field,
@@ -217,7 +217,15 @@ except ModuleNotFoundError:  # pragma: no cover
     __version__ = "0.0.0.dev0"
 
 __all__ = ["__version__"]
-__all__ += ["covmodel", "field", "variogram", "krige", "cokriging", "random", "tools"]
+__all__ += [
+    "covmodel",
+    "field",
+    "variogram",
+    "krige",
+    "cokriging",
+    "random",
+    "tools",
+]
 __all__ += ["transform", "normalizer", "config"]
 __all__ += [
     "CovModel",

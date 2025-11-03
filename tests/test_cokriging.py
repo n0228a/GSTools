@@ -45,8 +45,11 @@ class TestCokriging(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             gs.cokriging.IntrinsicCollocated(
-                correlogram, self.cond_pos, self.cond_val,
-                secondary_cond_pos=None, secondary_cond_val=None
+                correlogram,
+                self.cond_pos,
+                self.cond_val,
+                secondary_cond_pos=None,
+                secondary_cond_val=None,
             )
 
     def test_icck_secondary_cond_length(self):
@@ -56,14 +59,19 @@ class TestCokriging(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             gs.cokriging.IntrinsicCollocated(
-                correlogram, self.cond_pos, self.cond_val,
-                self.cond_pos, self.sec_cond_val[:3]  # Wrong length
+                correlogram,
+                self.cond_pos,
+                self.cond_val,
+                self.cond_pos,
+                self.sec_cond_val[:3],  # Wrong length
             )
 
     def test_zero_correlation_equals_sk(self):
         """Test that ρ=0 gives Simple Kriging results."""
         # Reference: Simple Kriging
-        sk = gs.krige.Simple(self.model, self.cond_pos, self.cond_val, mean=0.0)
+        sk = gs.krige.Simple(
+            self.model, self.cond_pos, self.cond_val, mean=0.0
+        )
         sk_field, sk_var = sk(self.pos, return_var=True)
 
         # SCCK with ρ=0
@@ -73,7 +81,9 @@ class TestCokriging(unittest.TestCase):
         scck = gs.cokriging.SimpleCollocated(
             correlogram_scck, self.cond_pos, self.cond_val
         )
-        scck_field, scck_var = scck(self.pos, secondary_data=self.sec_data, return_var=True)
+        scck_field, scck_var = scck(
+            self.pos, secondary_data=self.sec_data, return_var=True
+        )
         np.testing.assert_allclose(scck_field, sk_field, rtol=1e-6, atol=1e-9)
         np.testing.assert_allclose(scck_var, sk_var, rtol=1e-6, atol=1e-9)
 
@@ -82,10 +92,15 @@ class TestCokriging(unittest.TestCase):
             self.model, cross_corr=0.0, secondary_var=1.5
         )
         icck = gs.cokriging.IntrinsicCollocated(
-            correlogram_icck, self.cond_pos, self.cond_val,
-            self.cond_pos, self.sec_cond_val
+            correlogram_icck,
+            self.cond_pos,
+            self.cond_val,
+            self.cond_pos,
+            self.sec_cond_val,
         )
-        icck_field, icck_var = icck(self.pos, secondary_data=self.sec_data, return_var=True)
+        icck_field, icck_var = icck(
+            self.pos, secondary_data=self.sec_data, return_var=True
+        )
         np.testing.assert_allclose(icck_field, sk_field, rtol=1e-6, atol=1e-9)
         np.testing.assert_allclose(icck_var, sk_var, rtol=1e-6, atol=1e-9)
 
@@ -95,7 +110,9 @@ class TestCokriging(unittest.TestCase):
         secondary_var = 1.5
 
         # Get SK variance
-        sk = gs.krige.Simple(self.model, self.cond_pos, self.cond_val, mean=0.0)
+        sk = gs.krige.Simple(
+            self.model, self.cond_pos, self.cond_val, mean=0.0
+        )
         _, sk_var = sk(self.pos, return_var=True)
 
         # Calculate expected SCCK variance
@@ -106,7 +123,9 @@ class TestCokriging(unittest.TestCase):
 
         numerator = k * sk_var
         denominator = C_Y0 - (k**2) * (C_Z0 - sk_var)
-        lambda_Y0 = np.where(np.abs(denominator) < 1e-15, 0.0, numerator / denominator)
+        lambda_Y0 = np.where(
+            np.abs(denominator) < 1e-15, 0.0, numerator / denominator
+        )
         expected_var = sk_var * (1.0 - lambda_Y0 * k)
         expected_var = np.maximum(0.0, expected_var)
 
@@ -117,8 +136,12 @@ class TestCokriging(unittest.TestCase):
         scck = gs.cokriging.SimpleCollocated(
             correlogram, self.cond_pos, self.cond_val
         )
-        _, actual_var = scck(self.pos, secondary_data=self.sec_data, return_var=True)
-        np.testing.assert_allclose(actual_var, expected_var, rtol=1e-6, atol=1e-9)
+        _, actual_var = scck(
+            self.pos, secondary_data=self.sec_data, return_var=True
+        )
+        np.testing.assert_allclose(
+            actual_var, expected_var, rtol=1e-6, atol=1e-9
+        )
 
     def test_icck_variance_formula(self):
         """Test ICCK variance formula."""
@@ -126,7 +149,9 @@ class TestCokriging(unittest.TestCase):
         secondary_var = 1.5
 
         # Get SK variance
-        sk = gs.krige.Simple(self.model, self.cond_pos, self.cond_val, mean=0.0)
+        sk = gs.krige.Simple(
+            self.model, self.cond_pos, self.cond_val, mean=0.0
+        )
         _, sk_var = sk(self.pos, return_var=True)
 
         # Expected ICCK variance
@@ -141,11 +166,18 @@ class TestCokriging(unittest.TestCase):
             self.model, cross_corr=cross_corr, secondary_var=secondary_var
         )
         icck = gs.cokriging.IntrinsicCollocated(
-            correlogram, self.cond_pos, self.cond_val,
-            self.cond_pos, self.sec_cond_val
+            correlogram,
+            self.cond_pos,
+            self.cond_val,
+            self.cond_pos,
+            self.sec_cond_val,
         )
-        _, actual_var = icck(self.pos, secondary_data=self.sec_data, return_var=True)
-        np.testing.assert_allclose(actual_var, expected_var, rtol=1e-6, atol=1e-9)
+        _, actual_var = icck(
+            self.pos, secondary_data=self.sec_data, return_var=True
+        )
+        np.testing.assert_allclose(
+            actual_var, expected_var, rtol=1e-6, atol=1e-9
+        )
 
     def test_perfect_correlation_variance(self):
         """Test that ρ=±1 gives near-zero variance for ICCK."""
@@ -154,10 +186,15 @@ class TestCokriging(unittest.TestCase):
                 self.model, cross_corr=rho, secondary_var=1.5
             )
             icck = gs.cokriging.IntrinsicCollocated(
-                correlogram, self.cond_pos, self.cond_val,
-                self.cond_pos, self.sec_cond_val
+                correlogram,
+                self.cond_pos,
+                self.cond_val,
+                self.cond_pos,
+                self.sec_cond_val,
             )
-            _, icck_var = icck(self.pos, secondary_data=self.sec_data, return_var=True)
+            _, icck_var = icck(
+                self.pos, secondary_data=self.sec_data, return_var=True
+            )
             self.assertTrue(np.allclose(icck_var, 0.0, atol=1e-12))
 
     def test_variance_reduction(self):
@@ -166,7 +203,9 @@ class TestCokriging(unittest.TestCase):
         secondary_var = 1.5
 
         # Get SK variance
-        sk = gs.krige.Simple(self.model, self.cond_pos, self.cond_val, mean=0.0)
+        sk = gs.krige.Simple(
+            self.model, self.cond_pos, self.cond_val, mean=0.0
+        )
         _, sk_var = sk(self.pos, return_var=True)
 
         # Get ICCK variance
@@ -174,10 +213,15 @@ class TestCokriging(unittest.TestCase):
             self.model, cross_corr=cross_corr, secondary_var=secondary_var
         )
         icck = gs.cokriging.IntrinsicCollocated(
-            correlogram, self.cond_pos, self.cond_val,
-            self.cond_pos, self.sec_cond_val
+            correlogram,
+            self.cond_pos,
+            self.cond_val,
+            self.cond_pos,
+            self.sec_cond_val,
         )
-        _, icck_var = icck(self.pos, secondary_data=self.sec_data, return_var=True)
+        _, icck_var = icck(
+            self.pos, secondary_data=self.sec_data, return_var=True
+        )
 
         # ICCK variance ≤ SK variance
         self.assertTrue(np.all(icck_var <= sk_var + 1e-8))
