@@ -3,7 +3,6 @@ import numpy as np
 from gstools.field.base import Field
 
 
-
 def _precompute_offsets(shape, max_offset=None):
     """Precompute offsets from the origin sorted by Euclidean distance.
 
@@ -12,7 +11,7 @@ def _precompute_offsets(shape, max_offset=None):
     shape : tuple
         Grid shape.
     max_offset : int, optional
-        Maximum offset in any dimension. Default: max(shape).
+        Maximum offset in any dimension. Default: min(max(shape), 20).
 
     Returns
     -------
@@ -29,40 +28,20 @@ def _precompute_offsets(shape, max_offset=None):
     return offsets[idx]
 
 
-def ds_simulate(
-    ti_data,
-    sg_shape,
-    n,
-    t,
-    f,
-    seed,
-    conditions=None,
-    cond_weight=1.0,
-    categorical=True,
-    d_max=None,
-    postprocess=0,
-    boundary="strict",
-    max_offset=None,
-):
+def ds_simulate(ti_data, sg_shape, n, t, f, seed, conditions=None,
+                cond_weight=1.0, max_offset=None):
     """Direct Sampling simulation (Mariethoz et al. 2010).
 
     Parameters
     ----------
-    ti_data : ndarray or dict of ndarray
-        Training image. Dict triggers multivariate mode (Mariethoz2010 §5).
+    ti_data : ndarray, training image
     sg_shape : tuple, simulation grid shape
     n : int, max neighbors
     t : float, distance threshold (0.0 for DSBC)
     f : float, max scan fraction
     seed : int, random seed
-    conditions : dict or None
-        {tuple_index: scalar_value}
-    cond_weight : float, delta for conditioning weight
-    categorical : bool
-    d_max : float or None
-    weights : reserved for multivariate
-    postprocess : int, number of post-processing passes
-    boundary : str, "strict" (Juda2022 Eq. 5) or "partial" (Mariethoz2010 §3 ¶21)
+    conditions : dict or None, {tuple_index: value}
+    cond_weight : float, weight delta for conditioning nodes
     max_offset : int or None, passed to _precompute_offsets
 
     Returns
@@ -70,14 +49,8 @@ def ds_simulate(
     sg : ndarray
     """
     rng = np.random.default_rng(seed)
-    dim = len(sg_shape)
     ti_shape = ti_data.shape
     n_neighbors = int(n)
-
-    if not categorical and d_max is None:
-        d_max = float(ti_data.max() - ti_data.min())
-        if d_max == 0:
-            d_max = 1.0
 
     sg = np.full(sg_shape, np.nan)
     is_cond = np.zeros(sg_shape, dtype=bool)
@@ -103,7 +76,7 @@ def ds_simulate(
         if n == 0:
             return 0.0
         mismatches = (de_sg != de_ti).astype(np.float64)
-        if cond_mask is None or not np.any(cond_mask):
+        if not np.any(cond_mask):
             return float(np.mean(mismatches))
         w = np.ones(n, dtype=np.float64)
         w[cond_mask] = cond_weight
@@ -127,9 +100,7 @@ def ds_simulate(
 
         rounded = np.round(lags).astype(int)
         sw_lo = np.maximum(0, -rounded.min(axis=0))
-        sw_hi = np.minimum(
-            ti_shape_arr - 1, ti_shape_arr - 1 - rounded.max(axis=0)
-        )
+        sw_hi = np.minimum(ti_shape_arr - 1, ti_shape_arr - 1 - rounded.max(axis=0))
         if np.any(sw_lo > sw_hi):
             return _rand_ti_val()
 
@@ -173,57 +144,35 @@ class DirectSampling(Field):
     ti : TrainingImage
         Training image (the MPS model).
     n_neighbors : int
-        Maximum number of neighbors in data event.
+        Maximum number of neighbors in data event. Default: 32.
     scan_fraction : float, optional
         Maximum fraction of TI to scan per node. Default: 1.0.
     threshold : float, optional
         Distance threshold for accepting a pattern. Default: 0.0 (DSBC).
     cond_weight : float, optional
-        Weight delta for conditioning data in distance. Default: 1.0.
-    postprocess : int, optional
-        Number of post-processing passes. Default: 0.
-    boundary : str, optional
-        How to handle TI boundaries when lag vectors extend outside the TI.
-        ``"strict"`` (default): only scan nodes y where ALL lags fit inside
-        the TI (Juda2022 Eq. 5).
+        Weight delta for conditioning nodes in distance. Default: 1.0.
     max_offset : int, optional
-        Maximum offset component (in grid units) for neighbor precomputation.
-        None (default) uses the full extent of the simulation grid.
+        Maximum offset (grid units) for neighbor precomputation.
+        Default: min(max(grid_shape), 20).
     """
 
     default_field_names = ["field"]
 
-    def __init__(
-        self,
-        ti,
-        n_neighbors=32,
-        scan_fraction: float = 1,
-        threshold: float = 0.0,
-        cond_weight: float = 1.0,
-        postprocess: int = 0,
-        boundary: str = "strict",
-        max_offset=None,
-    ):
+    def __init__(self, ti, n_neighbors=32, scan_fraction: float = 1,
+                 threshold: float = 0.0, cond_weight: float = 1.0,
+                 max_offset=None):
         super().__init__(model=None, dim=ti.ndim, value_type="scalar")
         self._ti = ti
         self._n_neighbors = n_neighbors
         self._scan_fraction = scan_fraction
         self._threshold = threshold
         self._cond_weight = cond_weight
-        self._postprocess = postprocess
-        self._boundary = boundary
         self._max_offset = max_offset
         self._cond_pos = None
         self._cond_val = None
 
-    def __call__(
-        self,
-        pos=None,
-        seed=np.nan,
-        mesh_type: str = "structured",
-        post_process: bool = True,
-        store: bool = True,
-    ) -> np.ndarray:
+    def __call__(self, pos=None, seed=np.nan, mesh_type: str = "structured",
+                 post_process: bool = True, store: bool = True) -> np.ndarray:
         """Generate the MPS field.
 
         Parameters
@@ -249,26 +198,18 @@ class DirectSampling(Field):
         pos, shape = self.pre_pos(pos, mesh_type)
         conditions = self._conditions_to_grid(self.pos, shape)
         iseed = int(seed) if not np.isnan(seed) else 42
-        field = self._simulate(shape, conditions, iseed, self._boundary)
-        return self.post_field(field, name, post_process, save)
-
-    def _simulate(self, shape, conditions, seed, boundary=None):
-        if boundary is None:
-            boundary = self._boundary
-        return ds_simulate(
+        field = ds_simulate(
             ti_data=self._ti.data,
             sg_shape=shape,
             n=self._n_neighbors,
             t=self._threshold,
             f=self._scan_fraction,
-            seed=seed,
+            seed=iseed,
             conditions=conditions,
             cond_weight=self._cond_weight,
-            categorical=self._ti.categorical,
-            postprocess=self._postprocess,
-            boundary=boundary,
             max_offset=self._max_offset,
         )
+        return self.post_field(field, name, post_process, save)
 
     def _conditions_to_grid(self, pos, shape) -> dict:
         if self._cond_pos is None:

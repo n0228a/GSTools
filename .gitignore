@@ -128,3 +128,15 @@ docs/source/sg_execution_times.rst
 *.vtu
 *.vtr
 *.vtk
+
+# pixi environments
+pixi.lock
+
+# Editor settings
+.zed/
+
+# Local/temporary files
+bench_ds.py
+/channel_demo.py
+*.png
+*.npz
