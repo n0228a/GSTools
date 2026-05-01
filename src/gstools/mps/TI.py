@@ -97,7 +97,7 @@ class TrainingImage:
 
     @property
     def distance_type(self):
-        """str: Distance metric (``"l1"``, ``"l2"``, ``"lp"``, or ``"variation"``)."""
+        """str: Distance metric (e.g. ``"l1"``, ``"l2"``, ``"l3.5"``, or ``"variation"``)."""
         return self._distance_type
 
     # ------------------------------------------------------------------
@@ -172,7 +172,7 @@ class TrainingImage:
         -------
         float
         """
-        if self._distance_type != "variation" or self._categorical:
+        if self._p_norm is not None or self._categorical:
             return ti_val
         de_sg = np.asarray(de_sg, dtype=np.float64)
         de_ti = np.asarray(de_ti, dtype=np.float64)
