@@ -58,13 +58,13 @@ def compute_node_weights(
     return raw_w / raw_w.sum()
 
 
-def categorical_dist(de_sg, de_ti, node_weights):
+def categorical_dist(data_event_sim, data_event_ti, node_weights):
     """Weighted categorical distance (Mariethoz2010 Eq. 3).
 
     Parameters
     ----------
-    de_sg : numpy.ndarray, shape (n,)
-    de_ti : numpy.ndarray, shape (n,)
+    data_event_sim : numpy.ndarray, shape (n,)
+    data_event_ti : numpy.ndarray, shape (n,)
     node_weights : numpy.ndarray, shape (n,)
         Normalized spatial and conditioning weights.
 
@@ -73,16 +73,21 @@ def categorical_dist(de_sg, de_ti, node_weights):
     float
         Distance in [0, 1].
     """
-    return float(np.dot(node_weights, (de_sg != de_ti).astype(np.float64)))
+    return float(
+        np.dot(
+            node_weights,
+            (data_event_sim != data_event_ti).astype(np.float64),
+        )
+    )
 
 
-def l1_dist(de_sg, de_ti, node_weights, d_max):
+def l1_dist(data_event_sim, data_event_ti, node_weights, d_max):
     """Weighted L1 distance / Manhattan (Mariethoz2010 Eq. 6).
 
     Parameters
     ----------
-    de_sg : numpy.ndarray, shape (n,)
-    de_ti : numpy.ndarray, shape (n,)
+    data_event_sim : numpy.ndarray, shape (n,)
+    data_event_ti : numpy.ndarray, shape (n,)
     node_weights : numpy.ndarray, shape (n,)
         Normalized spatial and conditioning weights.
     d_max : float
@@ -93,16 +98,18 @@ def l1_dist(de_sg, de_ti, node_weights, d_max):
     float
         Distance in [0, 1].
     """
-    return float(np.dot(node_weights, np.abs(de_sg - de_ti) / d_max))
+    return float(
+        np.dot(node_weights, np.abs(data_event_sim - data_event_ti) / d_max)
+    )
 
 
-def l2_dist(de_sg, de_ti, node_weights, d_max):
+def l2_dist(data_event_sim, data_event_ti, node_weights, d_max):
     """Weighted L2 / RMS distance (Mariethoz2010 Eq. 4–5).
 
     Parameters
     ----------
-    de_sg : numpy.ndarray, shape (n,)
-    de_ti : numpy.ndarray, shape (n,)
+    data_event_sim : numpy.ndarray, shape (n,)
+    data_event_ti : numpy.ndarray, shape (n,)
     node_weights : numpy.ndarray, shape (n,)
         Normalized spatial and conditioning weights.
     d_max : float
@@ -113,10 +120,17 @@ def l2_dist(de_sg, de_ti, node_weights, d_max):
     float
         Distance in [0, 1].
     """
-    return float(np.sqrt(np.dot(node_weights, ((de_sg - de_ti) / d_max) ** 2)))
+    return float(
+        np.sqrt(
+            np.dot(
+                node_weights,
+                ((data_event_sim - data_event_ti) / d_max) ** 2,
+            )
+        )
+    )
 
 
-def lp_dist(de_sg, de_ti, node_weights, d_max, p):
+def lp_dist(data_event_sim, data_event_ti, node_weights, d_max, p):
     """Weighted Lp (Minkowski) distance.
 
     Warning: Computationally heavier than l1_dist or l2_dist due to
@@ -124,8 +138,8 @@ def lp_dist(de_sg, de_ti, node_weights, d_max, p):
 
     Parameters
     ----------
-    de_sg : numpy.ndarray, shape (n,)
-    de_ti : numpy.ndarray, shape (n,)
+    data_event_sim : numpy.ndarray, shape (n,)
+    data_event_ti : numpy.ndarray, shape (n,)
     node_weights : numpy.ndarray, shape (n,)
         Normalized spatial and conditioning weights.
     d_max : float
@@ -138,17 +152,17 @@ def lp_dist(de_sg, de_ti, node_weights, d_max, p):
     float
         Distance in [0, 1].
     """
-    diffs = np.abs(de_sg - de_ti) / d_max
+    diffs = np.abs(data_event_sim - data_event_ti) / d_max
     return float(np.sum(node_weights * (diffs**p)) ** (1.0 / p))
 
 
-def variation_dist(de_sg, de_ti, node_weights, d_max):
+def variation_dist(data_event_sim, data_event_ti, node_weights, d_max):
     """Weighted variation distance (Mariethoz2010 Eq. 9, de-meaned).
 
     Parameters
     ----------
-    de_sg : numpy.ndarray, shape (n,)
-    de_ti : numpy.ndarray, shape (n,)
+    data_event_sim : numpy.ndarray, shape (n,)
+    data_event_ti : numpy.ndarray, shape (n,)
     node_weights : numpy.ndarray, shape (n,)
         Normalized spatial and conditioning weights.
     d_max : float
@@ -159,5 +173,7 @@ def variation_dist(de_sg, de_ti, node_weights, d_max):
     float
         Distance in [0, 1].
     """
-    diffs = (de_sg - de_sg.mean()) - (de_ti - de_ti.mean())
+    diffs = (data_event_sim - data_event_sim.mean()) - (
+        data_event_ti - data_event_ti.mean()
+    )
     return float(np.sqrt(np.dot(node_weights, (diffs / d_max) ** 2)))

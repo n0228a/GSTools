@@ -105,7 +105,12 @@ class TrainingImage:
     # ------------------------------------------------------------------
 
     def distance(
-        self, de_sg, de_ti, cond_mask=None, cond_weight=1.0, lag_norms=None
+        self,
+        data_event_sim,
+        data_event_ti,
+        cond_mask=None,
+        cond_weight=1.0,
+        lag_norms=None,
     ):
         """Distance between two data events.
 
@@ -114,9 +119,9 @@ class TrainingImage:
 
         Parameters
         ----------
-        de_sg : array-like, shape (n,)
+        data_event_sim : array-like, shape (n,)
             Values at SG neighbourhood nodes.
-        de_ti : array-like, shape (n,)
+        data_event_ti : array-like, shape (n,)
             Values at TI neighbourhood nodes.
         cond_mask : array-like of bool, optional
             True where the neighbour is a conditioning datum.
@@ -132,9 +137,9 @@ class TrainingImage:
         float
             Distance in [0, 1].
         """
-        de_sg = np.asarray(de_sg, dtype=np.float64)
-        de_ti = np.asarray(de_ti, dtype=np.float64)
-        n = len(de_sg)
+        data_event_sim = np.asarray(data_event_sim, dtype=np.float64)
+        data_event_ti = np.asarray(data_event_ti, dtype=np.float64)
+        n = len(data_event_sim)
         if n == 0:
             return 0.0
 
@@ -143,16 +148,18 @@ class TrainingImage:
         )
 
         if self._categorical:
-            return categorical_dist(de_sg, de_ti, w)
+            return categorical_dist(data_event_sim, data_event_ti, w)
         if self._p_norm == 1.0:
-            return l1_dist(de_sg, de_ti, w, self._d_max)
+            return l1_dist(data_event_sim, data_event_ti, w, self._d_max)
         if self._p_norm == 2.0:
-            return l2_dist(de_sg, de_ti, w, self._d_max)
+            return l2_dist(data_event_sim, data_event_ti, w, self._d_max)
         if self._p_norm is not None:
-            return lp_dist(de_sg, de_ti, w, self._d_max, self._p_norm)
-        return variation_dist(de_sg, de_ti, w, self._d_max)
+            return lp_dist(
+                data_event_sim, data_event_ti, w, self._d_max, self._p_norm
+            )
+        return variation_dist(data_event_sim, data_event_ti, w, self._d_max)
 
-    def adjust_value(self, ti_val, de_sg, de_ti):
+    def adjust_value(self, ti_val, data_event_sim, data_event_ti):
         """Adjust matched TI value before assignment to SG.
 
         For ``distance="variation"``, applies the mean-shift correction
@@ -163,9 +170,9 @@ class TrainingImage:
         ----------
         ti_val : float
             Raw value at the matched TI node.
-        de_sg : array-like
+        data_event_sim : array-like
             SG data event (used to compute Z̄(x_i)).
-        de_ti : array-like
+        data_event_ti : array-like
             TI data event (used to compute Z̄(y)).
 
         Returns
@@ -174,9 +181,9 @@ class TrainingImage:
         """
         if self._p_norm is not None or self._categorical:
             return ti_val
-        de_sg = np.asarray(de_sg, dtype=np.float64)
-        de_ti = np.asarray(de_ti, dtype=np.float64)
-        return float(ti_val - de_ti.mean() + de_sg.mean())
+        data_event_sim = np.asarray(data_event_sim, dtype=np.float64)
+        data_event_ti = np.asarray(data_event_ti, dtype=np.float64)
+        return float(ti_val - data_event_ti.mean() + data_event_sim.mean())
 
     def __repr__(self):
         return (

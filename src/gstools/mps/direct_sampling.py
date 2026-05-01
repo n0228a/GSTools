@@ -33,11 +33,11 @@ def _precompute_offsets(shape, max_offset=None):
 
 
 def ds_simulate(
-    ti,
-    sg_shape,
-    n,
-    t,
-    f,
+    training_image,
+    sim_shape,
+    n_neighbors,
+    threshold,
+    scan_fraction,
     seed,
     conditions=None,
     cond_weight=1.0,
@@ -47,16 +47,17 @@ def ds_simulate(
 
     Parameters
     ----------
-    ti : TrainingImage
-        Training image; provides ``ti.distance()`` and ``ti.adjust_value()``.
-    sg_shape : tuple
+    training_image : TrainingImage
+        Training image; provides ``training_image.distance()`` and
+        ``training_image.adjust_value()``.
+    sim_shape : tuple
         Simulation grid shape.
-    n : int
+    n_neighbors : int
         Maximum number of neighbours in the data event (Juda2022 §2).
-    t : float
+    threshold : float
         Distance threshold for early acceptance (Juda2022 §2).
         ``0.0`` → DSBC mode.
-    f : float
+    scan_fraction : float
         Maximum TI scan fraction per node (Mariethoz2010 §3 ¶24).
     seed : int
         RNG seed.
@@ -72,15 +73,15 @@ def ds_simulate(
     numpy.ndarray
     """
     rng = np.random.default_rng(seed)
-    ti_data = ti.data
+    ti_data = training_image.data
     ti_shape = np.array(ti_data.shape)
-    sg_shape_arr = np.array(sg_shape)
-    dim = len(sg_shape)
+    sim_shape_arr = np.array(sim_shape)
+    dim = len(sim_shape)
     ti_size = int(ti_shape.prod())
 
-    sg = np.full(sg_shape, np.nan)
-    is_cond = np.zeros(sg_shape, dtype=bool)
-    informed = np.zeros(sg_shape, dtype=bool)
+    sg = np.full(sim_shape, np.nan)
+    is_cond = np.zeros(sim_shape, dtype=bool)
+    informed = np.zeros(sim_shape, dtype=bool)
 
     if conditions:
         for idx, val in conditions.items():
@@ -88,16 +89,16 @@ def ds_simulate(
             is_cond[idx] = True
             informed[idx] = True
 
-    offset_arr = _precompute_offsets(sg_shape, max_offset)
-    max_scan_ti = max(1, int(f * ti_size))
+    offset_arr = _precompute_offsets(sim_shape, max_offset)
+    max_scan_ti = max(1, int(scan_fraction * ti_size))
 
     def _rand_ti():
         return ti_data[tuple(rng.integers(0, s) for s in ti_shape)]
 
     def _get_neighbors(x_i):
         cands = x_i + offset_arr
-        valid = cands[np.all((cands >= 0) & (cands < sg_shape_arr), axis=1)]
-        return valid[informed[tuple(valid.T)]][:n]
+        valid = cands[np.all((cands >= 0) & (cands < sim_shape_arr), axis=1)]
+        return valid[informed[tuple(valid.T)]][:n_neighbors]
 
     def _simulate_node(x_i):
         nbrs = _get_neighbors(x_i)
@@ -105,41 +106,53 @@ def ds_simulate(
             return _rand_ti()
 
         lags = (nbrs - x_i).astype(np.float64)  # (k, dim)
-        de_sg = sg[tuple(nbrs.T)]  # (k,)
+        data_event_sim = sg[tuple(nbrs.T)]  # (k,)
         cond_mask = is_cond[tuple(nbrs.T)]  # (k,)
         lag_norms = np.linalg.norm(lags, axis=1)  # (k,)
 
         # Search window Y(L_i) — Juda2022 Eq. 5, Mariethoz2010 §3 ¶19
-        sw_lo = np.maximum(0, np.ceil(-lags.min(axis=0))).astype(int)
-        sw_hi = np.minimum(
+        win_lo = np.maximum(0, np.ceil(-lags.min(axis=0))).astype(int)
+        win_hi = np.minimum(
             ti_shape - 1, np.floor(ti_shape - 1 - lags.max(axis=0))
         ).astype(int)
-        if np.any(sw_lo > sw_hi):
+        if np.any(win_lo > win_hi):
             return _rand_ti()
 
-        sw_shape = tuple(sw_hi - sw_lo + 1)
-        sw_size = int(np.prod(sw_shape))
-        max_scan = min(max_scan_ti, sw_size)
-        start = int(rng.integers(0, sw_size))
+        win_shape = tuple(win_hi - win_lo + 1)
+        win_size = int(np.prod(win_shape))
+        max_scan = min(max_scan_ti, win_size)
+        start = int(rng.integers(0, win_size))
 
-        best_d, best_v, best_de_ti = np.inf, None, None
+        best_d, best_v, best_data_event_ti = np.inf, None, None
 
         for k in range(max_scan):
-            y = sw_lo + np.array(
-                np.unravel_index((start + k) % sw_size, sw_shape)
+            y = win_lo + np.array(
+                np.unravel_index((start + k) % win_size, win_shape)
             )
             ti_coords = np.round(y + lags).astype(int)
             # Residual validity — Mariethoz2010 §3 ¶21
-            de_ti = ti_data[tuple(ti_coords.T)]
-            dv = ti.distance(de_sg, de_ti, cond_mask, cond_weight, lag_norms)
-            if dv < best_d:
-                best_d, best_v, best_de_ti = dv, ti_data[tuple(y)], de_ti
-            if dv <= t:
+            data_event_ti = ti_data[tuple(ti_coords.T)]
+            dist_val = training_image.distance(
+                data_event_sim,
+                data_event_ti,
+                cond_mask,
+                cond_weight,
+                lag_norms,
+            )
+            if dist_val < best_d:
+                best_d, best_v, best_data_event_ti = (
+                    dist_val,
+                    ti_data[tuple(y)],
+                    data_event_ti,
+                )
+            if dist_val <= threshold:
                 break
 
         if best_v is None:
             return _rand_ti()
-        return ti.adjust_value(best_v, de_sg, best_de_ti)
+        return training_image.adjust_value(
+            best_v, data_event_sim, best_data_event_ti
+        )
 
     path = np.argwhere(np.isnan(sg))
     path = path[rng.permutation(len(path))]
@@ -222,11 +235,11 @@ class DirectSampling(Field):
             self.rng.seed = seed
         iseed = int(self.rng.random.randint(0, 2**31))
         field = ds_simulate(
-            ti=self._ti,
-            sg_shape=shape,
-            n=self._n_neighbors,
-            t=self._threshold,
-            f=self._scan_fraction,
+            training_image=self._ti,
+            sim_shape=shape,
+            n_neighbors=self._n_neighbors,
+            threshold=self._threshold,
+            scan_fraction=self._scan_fraction,
             seed=iseed,
             conditions=conditions,
             cond_weight=self._cond_weight,
