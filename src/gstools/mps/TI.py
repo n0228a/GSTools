@@ -11,8 +11,6 @@ from gstools.mps.distance import (
 
 __all__ = ["TrainingImage"]
 
-_VALID_DISTANCE = ("l1", "l2", "lp", "variation")
-
 
 class TrainingImage:
     """Training image for multiple point statistics simulation.
@@ -40,24 +38,32 @@ class TrainingImage:
     def __init__(
         self, data, categorical=True, distance="l1", distance_power=0.0
     ):
-        if distance not in _VALID_DISTANCE:
-            raise ValueError(
-                f"distance must be one of {_VALID_DISTANCE!r}, got {distance!r}"
-            )
         self._data = np.asarray(data)
         self._categorical = bool(categorical)
         self._distance_type = distance
         self._distance_power = float(distance_power)
         self._p_norm = None
-        if str(distance).lower().startswith("l"):
+        distance_lower = str(distance).lower()
+        if distance_lower.startswith("l"):
             try:
-                p_val = float(str(distance).lower()[1:])
+                p_val = float(distance_lower[1:])
             except ValueError:
                 raise ValueError(
-                    f"Invalid distance format: '{distance}'. Use 'l1', 'l2', 'l5', etc."
+                    f"TrainingImage: distance starting with 'l' must be followed by "
+                    f"a positive number (e.g. 'l1', 'l2', 'l3.5'). Got {distance!r}"
                 )
             if p_val <= 0:
-                raise ValueError("Lp norm exponent p must be greater than 0.")
+                raise ValueError(
+                    f"TrainingImage: Lp norm exponent must be > 0, got {p_val}."
+                )
+            self._p_norm = p_val
+        elif distance_lower == "variation":
+            self._p_norm = None
+        else:
+            raise ValueError(
+                f"TrainingImage: distance must be 'l<p>' (e.g. 'l1', 'l2') "
+                f"or 'variation'. Got {distance!r}"
+            )
 
         if not self._categorical:
             dmax = float(self._data.max() - self._data.min())
@@ -138,11 +144,11 @@ class TrainingImage:
 
         if self._categorical:
             return categorical_dist(de_sg, de_ti, w)
-        if self._distance_type == "l1":
+        if self._p_norm == 1.0:
             return l1_dist(de_sg, de_ti, w, self._d_max)
-        if self._distance_type == "l2":
+        if self._p_norm == 2.0:
             return l2_dist(de_sg, de_ti, w, self._d_max)
-        if self._distance_type == "lp":
+        if self._p_norm is not None:
             return lp_dist(de_sg, de_ti, w, self._d_max, self._p_norm)
         return variation_dist(de_sg, de_ti, w, self._d_max)
 
