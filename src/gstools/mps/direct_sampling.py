@@ -328,8 +328,55 @@ class DirectSampling(Field):
         """TrainingImage: The training image model."""
         return self._ti
 
+    @property
+    def n_neighbors(self):
+        """:class:`int`: Maximum neighbours in the data event."""
+        return self._n_neighbors
+
+    @n_neighbors.setter
+    def n_neighbors(self, value):
+        self._n_neighbors = int(value)
+
+    @property
+    def scan_fraction(self):
+        """:class:`float`: Maximum fraction of TI to scan per node."""
+        return self._scan_fraction
+
+    @scan_fraction.setter
+    def scan_fraction(self, value):
+        self._scan_fraction = float(value)
+
+    @property
+    def threshold(self):
+        """:class:`float`: Distance threshold (0.0 → DSBC mode)."""
+        return self._threshold
+
+    @threshold.setter
+    def threshold(self, value):
+        self._threshold = float(value)
+
+    @property
+    def cond_weight(self):
+        """:class:`float`: Weight for conditioning nodes in distance."""
+        return self._cond_weight
+
+    @cond_weight.setter
+    def cond_weight(self, value):
+        self._cond_weight = float(value)
+
+    @property
+    def max_offset(self):
+        """:class:`int` or :any:`None`: Maximum neighbour search radius."""
+        return self._max_offset
+
+    @max_offset.setter
+    def max_offset(self, value):
+        self._max_offset = None if value is None else int(value)
+
     def __repr__(self):
         return (
-            f"DirectSampling(dim={self.dim}, n={self._n_neighbors}, "
-            f"f={self._scan_fraction}, t={self._threshold})"
+            f"DirectSampling(dim={self.dim}, "
+            f"n_neighbors={self.n_neighbors}, "
+            f"scan_fraction={self.scan_fraction}, "
+            f"threshold={self.threshold})"
         )
