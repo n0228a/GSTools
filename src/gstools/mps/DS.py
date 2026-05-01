@@ -220,7 +220,7 @@ class DirectSampling(Field):
         conditions = self._conditions_to_grid(self.pos)
         if not np.isnan(seed):
             self.rng.seed = seed
-        iseed = self.rng._master_rng()
+        iseed = int(self.rng.random.randint(0, 2**31))
         field = ds_simulate(
             ti=self._ti,
             sg_shape=shape,
