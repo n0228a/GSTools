@@ -264,7 +264,7 @@ class DirectSampling(Field):
             The simulated field.
         """
         if mesh_type != "structured":
-            raise ValueError("DirectSampling only supports structured grids.")
+            raise ValueError("DirectSampling: only structured grids are supported.")
         name, save = self.get_store_config(store)
         pos, shape = self.pre_pos(pos, mesh_type)
         conditions = self._conditions_to_grid(self.pos)
@@ -302,7 +302,7 @@ class DirectSampling(Field):
                 candidates[idx] = (self._cond_val[k], dist_sq)
         return {idx: val for idx, (val, _) in candidates.items()}
 
-    def set_condition(self, cond_pos, cond_val, weight=None):
+    def set_condition(self, cond_pos, cond_val, cond_weight=None):
         """Set the conditioning data for the simulation.
 
         Parameters
@@ -311,7 +311,7 @@ class DirectSampling(Field):
             The position tuple of the conditioning data ``(x, [y, z])``.
         cond_val : :class:`numpy.ndarray`
             The values at the conditioning positions.
-        weight : :class:`float`, optional
+        cond_weight : :class:`float`, optional
             Conditioning weight δ. If given, overrides the ``cond_weight``
             set at construction. Default: :any:`None` (keep existing weight)
         """
@@ -320,8 +320,8 @@ class DirectSampling(Field):
         self._cond_pos, self._cond_val = _gs_set_condition(
             cond_pos, cond_val, self.dim
         )
-        if weight is not None:
-            self._cond_weight = float(weight)
+        if cond_weight is not None:
+            self._cond_weight = float(cond_weight)
 
     @property
     def ti(self):
