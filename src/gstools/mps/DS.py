@@ -1,25 +1,29 @@
 import numpy as np
 
 from gstools.field.base import Field
+from gstools.random.rng import RNG
+
+__all__ = ["DirectSampling"]
 
 
 def _precompute_offsets(shape, max_offset=None):
-    """Precompute offsets from the origin sorted by Euclidean distance.
+    """Neighbour offsets from the origin, sorted by Euclidean distance.
 
     Parameters
     ----------
     shape : tuple
-        Grid shape.
+        Simulation grid shape.
     max_offset : int, optional
-        Maximum offset in any dimension. Default: min(max(shape), 20).
+        Maximum offset in any dimension.
+        Default: ``max(shape)``.
 
     Returns
     -------
-    offset_arr : ndarray, shape (N, dim)
+    numpy.ndarray, shape (N, dim)
     """
     dim = len(shape)
     if max_offset is None:
-        max_offset = min(max(shape), 20)
+        max_offset = max(shape)
     rng_vals = np.arange(-max_offset, max_offset + 1)
     grid = np.array(np.meshgrid(*[rng_vals] * dim, indexing="ij"))
     offsets = grid.reshape(dim, -1).T
@@ -28,107 +32,127 @@ def _precompute_offsets(shape, max_offset=None):
     return offsets[idx]
 
 
-def ds_simulate(ti_data, sg_shape, n, t, f, seed, conditions=None,
-                cond_weight=1.0, max_offset=None):
-    """Direct Sampling simulation (Mariethoz et al. 2010).
+def ds_simulate(
+    ti,
+    sg_shape,
+    n,
+    t,
+    f,
+    seed,
+    conditions=None,
+    cond_weight=1.0,
+    max_offset=None,
+):
+    """Direct Sampling univariate simulation (Mariethoz2010, Juda2022).
 
     Parameters
     ----------
-    ti_data : ndarray, training image
-    sg_shape : tuple, simulation grid shape
-    n : int, max neighbors
-    t : float, distance threshold (0.0 for DSBC)
-    f : float, max scan fraction
-    seed : int, random seed
-    conditions : dict or None, {tuple_index: value}
-    cond_weight : float, weight delta for conditioning nodes
-    max_offset : int or None, passed to _precompute_offsets
+    ti : TrainingImage
+        Training image; provides ``ti.distance()`` and ``ti.adjust_value()``.
+    sg_shape : tuple
+        Simulation grid shape.
+    n : int
+        Maximum number of neighbours in the data event (Juda2022 §2).
+    t : float
+        Distance threshold for early acceptance (Juda2022 §2).
+        ``0.0`` → DSBC mode.
+    f : float
+        Maximum TI scan fraction per node (Mariethoz2010 §3 ¶24).
+    seed : int
+        RNG seed.
+    conditions : dict, optional
+        ``{tuple_index: value}`` mapping of conditioning data.
+    cond_weight : float, optional
+        Weight δ for conditioning nodes (Mariethoz2010 §3 ¶26).
+    max_offset : int, optional
+        Maximum neighbour search radius in grid units.
 
     Returns
     -------
-    sg : ndarray
+    numpy.ndarray
     """
     rng = np.random.default_rng(seed)
-    ti_shape = ti_data.shape
-    n_neighbors = int(n)
+    ti_data = ti.data
+    ti_shape = np.array(ti_data.shape)
+    sg_shape_arr = np.array(sg_shape)
+    dim = len(sg_shape)
+    ti_size = int(ti_shape.prod())
 
     sg = np.full(sg_shape, np.nan)
     is_cond = np.zeros(sg_shape, dtype=bool)
-    sg_informed = np.zeros(sg_shape, dtype=bool)
+    informed = np.zeros(sg_shape, dtype=bool)
 
     if conditions:
         for idx, val in conditions.items():
             sg[idx] = val
             is_cond[idx] = True
-            sg_informed[idx] = True
+            informed[idx] = True
 
-    def _get_neighbors(x_i):
-        candidates = x_i + offset_list
-        in_bounds = np.all((candidates >= 0) & (candidates < sg_shape), axis=1)
-        valid = candidates[in_bounds]
-        return valid[sg_informed[tuple(valid.T)]][:n_neighbors]
+    offset_arr = _precompute_offsets(sg_shape, max_offset)
+    max_scan_ti = max(1, int(f * ti_size))
 
-    def _rand_ti_val():
+    def _rand_ti():
         return ti_data[tuple(rng.integers(0, s) for s in ti_shape)]
 
-    def _dist(de_sg, de_ti, cond_mask):
-        n = de_sg.shape[0]
-        if n == 0:
-            return 0.0
-        mismatches = (de_sg != de_ti).astype(np.float64)
-        if not np.any(cond_mask):
-            return float(np.mean(mismatches))
-        w = np.ones(n, dtype=np.float64)
-        w[cond_mask] = cond_weight
-        return float(np.dot(w, mismatches) / w.sum())
-
-    offset_list = _precompute_offsets(sg_shape, max_offset)
-    ti_shape_arr = np.array(ti_shape)
-    max_scan_ti = max(1, int(f * ti_shape_arr.prod()))
-
-    uninformed = np.argwhere(np.isnan(sg))
-    path = uninformed[rng.permutation(len(uninformed))]
+    def _get_neighbors(x_i):
+        cands = x_i + offset_arr
+        valid = cands[np.all((cands >= 0) & (cands < sg_shape_arr), axis=1)]
+        return valid[informed[tuple(valid.T)]][:n]
 
     def _simulate_node(x_i):
-        neighbor_coords = _get_neighbors(x_i)
-        if len(neighbor_coords) == 0:
-            return _rand_ti_val()
+        nbrs = _get_neighbors(x_i)
+        if len(nbrs) == 0:
+            return _rand_ti()
 
-        lags = (neighbor_coords - x_i).astype(np.float64)
-        cond_mask = is_cond[tuple(neighbor_coords.T)]
-        de_sg = sg[tuple(neighbor_coords.T)]
+        lags = (nbrs - x_i).astype(np.float64)  # (k, dim)
+        de_sg = sg[tuple(nbrs.T)]  # (k,)
+        cond_mask = is_cond[tuple(nbrs.T)]  # (k,)
+        lag_norms = np.linalg.norm(lags, axis=1)  # (k,)
 
-        rounded = np.round(lags).astype(int)
-        sw_lo = np.maximum(0, -rounded.min(axis=0))
-        sw_hi = np.minimum(ti_shape_arr - 1, ti_shape_arr - 1 - rounded.max(axis=0))
+        # Search window Y(L_i) — Juda2022 Eq. 5, Mariethoz2010 §3 ¶19
+        sw_lo = np.maximum(0, np.ceil(-lags.min(axis=0))).astype(int)
+        sw_hi = np.minimum(
+            ti_shape - 1, np.floor(ti_shape - 1 - lags.max(axis=0))
+        ).astype(int)
         if np.any(sw_lo > sw_hi):
-            return _rand_ti_val()
+            return _rand_ti()
 
         sw_shape = tuple(sw_hi - sw_lo + 1)
         sw_size = int(np.prod(sw_shape))
         max_scan = min(max_scan_ti, sw_size)
-        start = rng.integers(0, sw_size)
+        start = int(rng.integers(0, sw_size))
 
-        best_d = np.inf
-        best_v = None
-        for count in range(max_scan):
+        best_d, best_v, best_de_ti = np.inf, None, None
+
+        for k in range(max_scan):
             y = sw_lo + np.array(
-                np.unravel_index(int((start + count) % sw_size), sw_shape)
+                np.unravel_index((start + k) % sw_size, sw_shape)
             )
             ti_coords = np.round(y + lags).astype(int)
-            dv = _dist(de_sg, ti_data[tuple(ti_coords.T)], cond_mask)
+            # Residual validity — Mariethoz2010 §3 ¶21
+            de_ti = ti_data[tuple(ti_coords.T)]
+            dv = ti.distance(de_sg, de_ti, cond_mask, cond_weight, lag_norms)
             if dv < best_d:
-                best_d = dv
-                best_v = ti_data[tuple(y)]
+                best_d, best_v, best_de_ti = dv, ti_data[tuple(y)], de_ti
             if dv <= t:
                 break
 
-        return best_v if best_v is not None else _rand_ti_val()
+        if best_v is None:
+            return _rand_ti()
+        return ti.adjust_value(best_v, de_sg, best_de_ti)
+
+    path = np.argwhere(np.isnan(sg))
+    path = path[rng.permutation(len(path))]
 
     for x_i in path:
         x_i_t = tuple(x_i)
-        sg[x_i_t] = _simulate_node(x_i)
-        sg_informed[x_i_t] = True
+        val = _simulate_node(x_i)
+        if np.isnan(val):
+            raise ValueError(
+                f"Simulation produced NaN at {x_i}. Check TI data."
+            )
+        sg[x_i_t] = val
+        informed[x_i_t] = True
 
     return sg
 
@@ -136,70 +160,69 @@ def ds_simulate(ti_data, sg_shape, n, t, f, seed, conditions=None,
 class DirectSampling(Field):
     """Multiple Point Statistics simulation using Direct Sampling.
 
-    Subclasses gstools.field.base.Field. Takes a TrainingImage
-    (analogous to CovModel) and produces fields on structured grids.
+    Subclasses :class:`gstools.field.base.Field`. Takes a :class:`TrainingImage`
+    (analogous to :class:`CovModel`) and produces fields on structured grids.
 
     Parameters
     ----------
     ti : TrainingImage
-        Training image (the MPS model).
-    n_neighbors : int
-        Maximum number of neighbors in data event. Default: 32.
+        The training image (the MPS model).
+    n_neighbors : int, optional
+        Maximum neighbors in data event. Default: 32.
     scan_fraction : float, optional
-        Maximum fraction of TI to scan per node. Default: 1.0.
+        Maximum fraction of TI to scan per node. Default: 0.125.
     threshold : float, optional
-        Distance threshold for accepting a pattern. Default: 0.0 (DSBC).
+        Distance threshold. 0.0 -> DSBC mode. Default: 0.0.
     cond_weight : float, optional
-        Weight delta for conditioning nodes in distance. Default: 1.0.
+        Weight for conditioning nodes in distance. Default: 1.0.
     max_offset : int, optional
-        Maximum offset (grid units) for neighbor precomputation.
-        Default: min(max(grid_shape), 20).
+        Maximum neighbor search radius in grid units.
+    seed : int or nan, optional
+        Master RNG seed. Default: nan.
     """
 
     default_field_names = ["field"]
 
-    def __init__(self, ti, n_neighbors=32, scan_fraction: float = 1,
-                 threshold: float = 0.0, cond_weight: float = 1.0,
-                 max_offset=None):
+    def __init__(
+        self,
+        ti,
+        n_neighbors=32,
+        scan_fraction=0.125,
+        threshold=0.0,
+        cond_weight=1.0,
+        max_offset=None,
+        seed=np.nan,
+    ):
         super().__init__(model=None, dim=ti.ndim, value_type="scalar")
         self._ti = ti
-        self._n_neighbors = n_neighbors
-        self._scan_fraction = scan_fraction
-        self._threshold = threshold
-        self._cond_weight = cond_weight
+        self._n_neighbors = int(n_neighbors)
+        self._scan_fraction = float(scan_fraction)
+        self._threshold = float(threshold)
+        self._cond_weight = float(cond_weight)
         self._max_offset = max_offset
         self._cond_pos = None
         self._cond_val = None
+        self.rng = RNG(seed)
 
-    def __call__(self, pos=None, seed=np.nan, mesh_type: str = "structured",
-                 post_process: bool = True, store: bool = True) -> np.ndarray:
-        """Generate the MPS field.
-
-        Parameters
-        ----------
-        pos : list of arrays, optional
-            Position tuple for structured grid.
-        seed : int, optional
-            Seed for RNG.
-        mesh_type : str, optional
-            Must be "structured". Default: "structured".
-        post_process : bool, optional
-            Whether to apply mean/normalizer/trend. Default: True.
-        store : str or bool, optional
-            Whether to store field. Default: True.
-
-        Returns
-        -------
-        field : numpy.ndarray
-        """
+    def __call__(
+        self,
+        pos=None,
+        seed=np.nan,
+        mesh_type="structured",
+        post_process=True,
+        store=True,
+    ):
+        """Generate the simulated field."""
         if mesh_type != "structured":
             raise ValueError("DirectSampling only supports structured grids.")
         name, save = self.get_store_config(store)
         pos, shape = self.pre_pos(pos, mesh_type)
-        conditions = self._conditions_to_grid(self.pos, shape)
-        iseed = int(seed) if not np.isnan(seed) else 42
+        conditions = self._conditions_to_grid(self.pos)
+        if not np.isnan(seed):
+            self.rng.seed = seed
+        iseed = self.rng._master_rng()
         field = ds_simulate(
-            ti_data=self._ti.data,
+            ti=self._ti,
             sg_shape=shape,
             n=self._n_neighbors,
             t=self._threshold,
@@ -211,43 +234,33 @@ class DirectSampling(Field):
         )
         return self.post_field(field, name, post_process, save)
 
-    def _conditions_to_grid(self, pos, shape) -> dict:
+    def _conditions_to_grid(self, axes):
+        """Smart snapping: Mariethoz 2010 collision rule."""
         if self._cond_pos is None:
             return {}
-        n_pts = self._cond_val.shape[0]
-        idx = np.empty((self.dim, n_pts), dtype=int)
-        for d in range(self.dim):
-            idx[d] = np.argmin(
-                np.abs(pos[d][:, None] - self._cond_pos[d][None, :]), axis=0
+        candidates = {}  # idx -> (val, dist_sq)
+        for k in range(self._cond_val.shape[0]):
+            idx = tuple(
+                int(np.argmin(np.abs(axes[d] - self._cond_pos[d][k])))
+                for d in range(self.dim)
             )
-        return {
-            tuple(int(idx[d, k]) for d in range(self.dim)): self._cond_val[k]
-            for k in range(n_pts)
-        }
+            dist_sq = sum(
+                (axes[d][idx[d]] - self._cond_pos[d][k]) ** 2
+                for d in range(self.dim)
+            )
+            if idx not in candidates or dist_sq < candidates[idx][1]:
+                candidates[idx] = (self._cond_val[k], dist_sq)
+        return {idx: val for idx, (val, _) in candidates.items()}
 
-    def set_condition(self, cond_pos, cond_val, weight: float = None):
-        """Set conditioning data.
-
-        Same convention as gstools.Krige: cond_pos is a list of coordinate
-        arrays [x, y, ...], each of length N (i.e. shape dim × N).
-        NaN values in cond_val are silently dropped.
-
-        Parameters
-        ----------
-        cond_pos : list of array-like, length dim
-            Coordinate arrays, one per dimension, e.g. ``[x_arr, y_arr]``.
-        cond_val : array-like, shape (N,)
-            Values at conditioning points.
-        weight : float, optional
-            Conditioning weight delta. Overrides the init value.
-        """
+    def set_condition(self, cond_pos, cond_val, weight=None):
+        """Set conditioning data."""
         from gstools.krige.tools import set_condition as _gs_set_condition
 
         self._cond_pos, self._cond_val = _gs_set_condition(
             cond_pos, cond_val, self.dim
         )
         if weight is not None:
-            self._cond_weight = weight
+            self._cond_weight = float(weight)
 
     @property
     def ti(self):

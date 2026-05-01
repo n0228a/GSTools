@@ -140,3 +140,9 @@ bench_ds.py
 /channel_demo.py
 *.png
 *.npz
+
+# Claude Code / planning artefacts (not published)
+CLAUDE.md
+docs/superpowers/
+src/**/CLAUDE.md
+*.pdf

@@ -27,8 +27,8 @@ ti_model = mps.TrainingImage(ti_arr, categorical=True)
 print(f"TI shape: {ti_model.shape}  sand={ti_arr.mean():.3f}")
 
 # 2. Conditioning: 50 random hard-data points from the TI
-SG_SIZE = 50
-N_COND = 150
+SG_SIZE = 100
+N_COND = 100
 rng = np.random.default_rng(0)
 cond_row = rng.integers(0, SG_SIZE, N_COND)
 cond_col = rng.integers(0, SG_SIZE, N_COND)

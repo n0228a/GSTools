@@ -1,45 +1,180 @@
 import numpy as np
 
+from gstools.mps.distance import (
+    categorical_dist,
+    compute_node_weights,
+    l1_dist,
+    l2_dist,
+    lp_dist,
+    variation_dist,
+)
+
 __all__ = ["TrainingImage"]
+
+_VALID_DISTANCE = ("l1", "l2", "lp", "variation")
 
 
 class TrainingImage:
     """Training image for multiple point statistics simulation.
 
-    The MPS analogue of a covariance model: encapsulates the training data
-    and the variable type used to compare data events.
+    The MPS analogue of :class:`gstools.CovModel`: encapsulates training
+    data and the distance function for comparing data events.
 
     Parameters
     ----------
     data : numpy.ndarray
         Training image data (n-d array).
     categorical : bool, optional
-        Whether the variable is categorical. Default: True.
+        Whether the variable is categorical. Default: ``True``.
+    distance : str, optional
+        Distance metric for continuous variables: ``"l1"`` (Juda2022
+        Eq. 7, default), ``"l2"`` (Mariethoz2010 Eq. 4–5), or
+        ``"variation"`` (Mariethoz2010 Eq. 9). Ignored when categorical.
+    distance_power : float, optional
+        Exponent δ for spatial-decay weighting of neighbours
+        (Mariethoz2010 Eq. 3). Applied to **all** distance types.
+        ``0.0`` → uniform weights (oracle-compatible default).
+        ``1.0`` → closer neighbours weighted more heavily.
     """
 
-    def __init__(self, data, categorical: bool = True):
+    def __init__(
+        self, data, categorical=True, distance="l1", distance_power=0.0
+    ):
+        if distance not in _VALID_DISTANCE:
+            raise ValueError(
+                f"distance must be one of {_VALID_DISTANCE!r}, got {distance!r}"
+            )
         self._data = np.asarray(data)
         self._categorical = bool(categorical)
+        self._distance_type = distance
+        self._distance_power = float(distance_power)
+        self._p_norm = None
+        if str(distance).lower().startswith("l"):
+            try:
+                p_val = float(str(distance).lower()[1:])
+            except ValueError:
+                raise ValueError(
+                    f"Invalid distance format: '{distance}'. Use 'l1', 'l2', 'l5', etc."
+                )
+            if p_val <= 0:
+                raise ValueError("Lp norm exponent p must be greater than 0.")
+
+        if not self._categorical:
+            dmax = float(self._data.max() - self._data.min())
+            self._d_max = dmax if dmax > 0 else 1.0
+        else:
+            self._d_max = None
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
     @property
-    def data(self) -> np.ndarray:
-        """ndarray: Raw training image data."""
+    def data(self):
+        """numpy.ndarray: Raw training image data."""
         return self._data
 
     @property
-    def ndim(self) -> int:
+    def ndim(self):
         """int: Number of spatial dimensions."""
         return self._data.ndim
 
     @property
-    def shape(self) -> tuple:
+    def shape(self):
         """tuple: Shape of the training image."""
         return self._data.shape
 
     @property
-    def categorical(self) -> bool:
+    def categorical(self):
         """bool: Whether the variable is categorical."""
         return self._categorical
 
+    @property
+    def distance_type(self):
+        """str: Distance metric (``"l1"``, ``"l2"``, ``"lp"``, or ``"variation"``)."""
+        return self._distance_type
+
+    # ------------------------------------------------------------------
+    # Distance
+    # ------------------------------------------------------------------
+
+    def distance(
+        self, de_sg, de_ti, cond_mask=None, cond_weight=1.0, lag_norms=None
+    ):
+        """Distance between two data events.
+
+        Applies spatial-decay weights (Mariethoz2010 Eq. 3) to all
+        distance types when ``distance_power > 0``.
+
+        Parameters
+        ----------
+        de_sg : array-like, shape (n,)
+            Values at SG neighbourhood nodes.
+        de_ti : array-like, shape (n,)
+            Values at TI neighbourhood nodes.
+        cond_mask : array-like of bool, optional
+            True where the neighbour is a conditioning datum.
+        cond_weight : float, optional
+            Weight multiplier δ for conditioning nodes
+            (Mariethoz2010 §3 ¶26). Default: ``1.0``.
+        lag_norms : array-like, shape (n,), optional
+            Euclidean norms ``‖h_i‖`` of each lag vector. Required for
+            spatial-decay weighting (``distance_power > 0``).
+
+        Returns
+        -------
+        float
+            Distance in [0, 1].
+        """
+        de_sg = np.asarray(de_sg, dtype=np.float64)
+        de_ti = np.asarray(de_ti, dtype=np.float64)
+        n = len(de_sg)
+        if n == 0:
+            return 0.0
+
+        w = compute_node_weights(
+            n, lag_norms, self._distance_power, cond_mask, cond_weight
+        )
+
+        if self._categorical:
+            return categorical_dist(de_sg, de_ti, w)
+        if self._distance_type == "l1":
+            return l1_dist(de_sg, de_ti, w, self._d_max)
+        if self._distance_type == "l2":
+            return l2_dist(de_sg, de_ti, w, self._d_max)
+        if self._distance_type == "lp":
+            return lp_dist(de_sg, de_ti, w, self._d_max, self._p_norm)
+        return variation_dist(de_sg, de_ti, w, self._d_max)
+
+    def adjust_value(self, ti_val, de_sg, de_ti):
+        """Adjust matched TI value before assignment to SG.
+
+        For ``distance="variation"``, applies the mean-shift correction
+        (Mariethoz2010 Eq. 9): Z(x_i) = Z(y) − Z̄(y) + Z̄(x_i).
+        For all other metrics returns *ti_val* unchanged.
+
+        Parameters
+        ----------
+        ti_val : float
+            Raw value at the matched TI node.
+        de_sg : array-like
+            SG data event (used to compute Z̄(x_i)).
+        de_ti : array-like
+            TI data event (used to compute Z̄(y)).
+
+        Returns
+        -------
+        float
+        """
+        if self._distance_type != "variation" or self._categorical:
+            return ti_val
+        de_sg = np.asarray(de_sg, dtype=np.float64)
+        de_ti = np.asarray(de_ti, dtype=np.float64)
+        return float(ti_val - de_ti.mean() + de_sg.mean())
+
     def __repr__(self):
-        return f"TrainingImage(shape={self.shape}, categorical={self._categorical})"
+        return (
+            f"TrainingImage(shape={self.shape}, "
+            f"categorical={self._categorical}, "
+            f"distance={self._distance_type!r})"
+        )
