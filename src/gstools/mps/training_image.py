@@ -1,3 +1,13 @@
+"""
+GStools subpackage providing the TrainingImage class for MPS simulations.
+
+.. currentmodule:: gstools.mps
+
+The following classes and functions are provided
+
+.. autosummary::
+   TrainingImage
+"""
 import numpy as np
 
 from gstools.mps.distance import (

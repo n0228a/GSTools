@@ -1,3 +1,13 @@
+"""
+GStools subpackage providing the Direct Sampling MPS simulation class.
+
+.. currentmodule:: gstools.mps
+
+The following classes and functions are provided
+
+.. autosummary::
+   DirectSampling
+"""
 import numpy as np
 
 from gstools.field.base import Field
