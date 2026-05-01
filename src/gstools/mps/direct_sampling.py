@@ -235,7 +235,34 @@ class DirectSampling(Field):
         post_process=True,
         store=True,
     ):
-        """Generate the simulated field."""
+        """Generate the spatial random field via Direct Sampling.
+
+        The field is saved as ``self.field`` and is also returned.
+
+        Parameters
+        ----------
+        pos : :class:`list`, optional
+            The position tuple, containing main direction and transversal
+            directions. Only structured grids are supported.
+        seed : :class:`int`, optional
+            Seed for the RNG. If ``np.nan``, the current seed is kept.
+            Default: ``np.nan``
+        mesh_type : :class:`str`, optional
+            Grid type. Must be ``"structured"``.
+            Default: ``"structured"``
+        post_process : :class:`bool`, optional
+            Whether to apply post-processing transformations (mean,
+            normalizer, trend) to the field. Default: :any:`True`
+        store : :class:`bool` or :class:`str`, optional
+            Whether to store the field (``True``), not store it (``False``),
+            or store it under a custom name (string).
+            Default: :any:`True`
+
+        Returns
+        -------
+        field : :class:`numpy.ndarray`
+            The simulated field.
+        """
         if mesh_type != "structured":
             raise ValueError("DirectSampling only supports structured grids.")
         name, save = self.get_store_config(store)
@@ -276,7 +303,18 @@ class DirectSampling(Field):
         return {idx: val for idx, (val, _) in candidates.items()}
 
     def set_condition(self, cond_pos, cond_val, weight=None):
-        """Set conditioning data."""
+        """Set the conditioning data for the simulation.
+
+        Parameters
+        ----------
+        cond_pos : :class:`list`
+            The position tuple of the conditioning data ``(x, [y, z])``.
+        cond_val : :class:`numpy.ndarray`
+            The values at the conditioning positions.
+        weight : :class:`float`, optional
+            Conditioning weight δ. If given, overrides the ``cond_weight``
+            set at construction. Default: :any:`None` (keep existing weight)
+        """
         from gstools.krige.tools import set_condition as _gs_set_condition
 
         self._cond_pos, self._cond_val = _gs_set_condition(
