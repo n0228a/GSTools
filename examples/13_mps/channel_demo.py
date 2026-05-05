@@ -26,7 +26,7 @@ ti_arr = np.load(CACHE)["array1"].astype(int)  # (256, 256)
 ti_model = mps.TrainingImage(ti_arr, categorical=True)
 print(f"TI shape: {ti_model.shape}  sand={ti_arr.mean():.3f}")
 
-# 2. Conditioning: 50 random hard-data points from the TI
+# 2. Conditioning: 100 random hard-data points from the TI
 SG_SIZE = 100
 N_COND = 100
 rng = np.random.default_rng(0)

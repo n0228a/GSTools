@@ -226,7 +226,7 @@ class DirectSampling(Field):
         self._max_offset = max_offset
         self._cond_pos = None
         self._cond_val = None
-        self.rng = RNG(seed)
+        self.rng = RNG(None if np.isnan(seed) else int(seed))
 
     def __call__(
         self,
@@ -272,7 +272,7 @@ class DirectSampling(Field):
         pos, shape = self.pre_pos(pos, mesh_type)
         conditions = self._conditions_to_grid(self.pos)
         if not np.isnan(seed):
-            self.rng.seed = seed
+            self.rng.seed = int(seed)
         iseed = int(self.rng.random.randint(0, 2**31))
         field = ds_simulate(
             training_image=self._ti,
