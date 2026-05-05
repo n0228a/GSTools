@@ -87,7 +87,6 @@ def ds_simulate(
     ti_data = training_image.data
     ti_shape = np.array(ti_data.shape)
     sim_shape_arr = np.array(sim_shape)
-    dim = len(sim_shape)
     ti_size = int(ti_shape.prod())
 
     sg = np.full(sim_shape, np.nan)
