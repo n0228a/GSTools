@@ -8,6 +8,7 @@ The following classes and functions are provided
 .. autosummary::
    DirectSampling
 """
+
 import numpy as np
 
 from gstools.field.base import Field
@@ -193,7 +194,7 @@ class DirectSampling(Field):
     n_neighbors : int, optional
         Maximum neighbors in data event. Default: 32.
     scan_fraction : float, optional
-        Maximum fraction of TI to scan per node. Default: 0.125.
+        Maximum fraction of TI to scan per node. Default: 1.
     threshold : float, optional
         Distance threshold. 0.0 -> DSBC mode. Default: 0.0.
     cond_weight : float, optional
@@ -210,7 +211,7 @@ class DirectSampling(Field):
         self,
         ti,
         n_neighbors=32,
-        scan_fraction=0.125,
+        scan_fraction=1,
         threshold=0.0,
         cond_weight=1.0,
         max_offset=None,
@@ -264,7 +265,9 @@ class DirectSampling(Field):
             The simulated field.
         """
         if mesh_type != "structured":
-            raise ValueError("DirectSampling: only structured grids are supported.")
+            raise ValueError(
+                "DirectSampling: only structured grids are supported."
+            )
         name, save = self.get_store_config(store)
         pos, shape = self.pre_pos(pos, mesh_type)
         conditions = self._conditions_to_grid(self.pos)
