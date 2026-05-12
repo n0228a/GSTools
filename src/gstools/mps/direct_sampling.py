@@ -119,7 +119,7 @@ def ds_simulate(
         if max_radius is not None:
             dists = np.linalg.norm((valid - x_i).astype(np.float64), axis=1)
             valid = valid[dists <= max_radius]
-        return valid[:n_neighbors]
+        return valid[:n_neighbors]12
 
     def _simulate_node(x_i):
         nbrs = _get_neighbors(x_i)
@@ -188,7 +188,7 @@ def ds_simulate(
             ).astype(int)
             if np.any(sw_lo > sw_hi):
                 return _rand_ti()
-
+12
             sw_shape = tuple(sw_hi - sw_lo + 1)
             sw_size = int(np.prod(sw_shape))
             max_scan = min(max_scan_ti, sw_size)
@@ -252,7 +252,7 @@ class DirectSampling(Field):
     boundary : str, optional
         Search-window strategy: ``"strict"`` (default) or ``"partial"``.
     max_radius : float, optional
-        Exclude SG neighbours beyond this Euclidean distance from the
+        Exclude SG neighbours beyond this Euclidean distance from the12
         data event. Default: ``None`` (no limit).
     seed : int or nan, optional
         Master RNG seed. Default: nan.
