@@ -24,6 +24,33 @@ from gstools.tools.geometric import generate_grid, no_of_angles
 __all__ = ["DirectSampling"]
 
 
+def _check_penalty_matrix_conditioning(var_name, penalty_matrix, values):
+    """Validate conditioning values against a Variable's penalty_matrix, if set.
+
+    Fails fast at ``set_condition()`` time with a clear ``ValueError`` rather
+    than raising a raw ``IndexError`` deep in the scan loop when the matrix
+    is later indexed by an out-of-range or non-integer category code.
+    """
+    if penalty_matrix is None:
+        return
+    n_cat = penalty_matrix.shape[0]
+    values = np.asarray(values, dtype=np.double)
+    finite_vals = values[np.isfinite(values)]
+    if finite_vals.size == 0:
+        return
+    non_integer = finite_vals != np.floor(finite_vals)
+    out_of_range = (finite_vals < 0) | (finite_vals >= n_cat)
+    invalid = non_integer | out_of_range
+    if invalid.any():
+        bad_val = finite_vals[invalid].flat[0]
+        label = "variable" if var_name is None else f"variable {var_name!r}"
+        raise ValueError(
+            f"DirectSampling.set_condition: {label} has a penalty_matrix set; "
+            "conditioning values must be non-negative integer-valued codes "
+            f"< {n_cat}; found invalid value {bad_val!r}."
+        )
+
+
 def _warn_nonuniform_axes(axes):
     """Warn when a transform/zonation is active on non-index-like axes.
 
@@ -431,6 +458,10 @@ class DirectSampling(Field):
             self._cond_val = {
                 v: np.asarray(a, dtype=np.double) for v, a in cond_val.items()
             }
+            for v_name, arr in self._cond_val.items():
+                _check_penalty_matrix_conditioning(
+                    v_name, self._ti.variable(v_name).penalty_matrix, arr
+                )
         elif self._ti.multivariate:
             raise ValueError(
                 "DirectSampling: cond_val must be a dict {variable: array} "
@@ -441,6 +472,9 @@ class DirectSampling(Field):
 
             self._cond_pos, self._cond_val = _gs_set_condition(
                 cond_pos, cond_val, self.dim
+            )
+            _check_penalty_matrix_conditioning(
+                None, self._ti.variable().penalty_matrix, self._cond_val
             )
 
     def set_mv_transforms(self, mean=None, normalizer=None, trend=None):
