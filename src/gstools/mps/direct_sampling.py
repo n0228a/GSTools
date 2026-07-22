@@ -228,6 +228,12 @@ class DirectSampling(Field):
             ``{variable: numpy.ndarray}`` dict with all variables on equal
             footing — each is also stored as a named field accessible via
             ``self[variable]`` / :attr:`all_fields`.
+
+        Notes
+        -----
+        DS post-processing passes (``MPSModel(post_processing=..., post_processing_factor=...)``,
+        Me13 §4) run serially after the main simulation pass. They are distinct from this
+        method's ``post_process`` kwarg (Field mean/normalizer/trend pipeline).
         """
         if mesh_type != "structured":
             raise ValueError(
@@ -319,6 +325,8 @@ class DirectSampling(Field):
             path=path,
             zone_tis=[z.ti for z in zones] if zones else None,
             zone_selector=selector,
+            post_processing=self._mps_model.post_processing,
+            post_processing_factor=self._mps_model.post_processing_factor,
         )
         # Branch only on the return type: multivariate → dict of named arrays;
         # univariate → bare array (unwrap the single None key).

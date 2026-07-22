@@ -31,6 +31,15 @@ Bind a training image to a region of the simulation grid for zonated Direct Samp
 
    Zone
 
+Pyramid
+^^^^^^^
+Multi-resolution pyramid configuration for coarse-to-fine Direct Sampling.
+
+.. autosummary::
+   :toctree:
+
+   Pyramid
+
 Simulation
 ^^^^^^^^^^
 Direct Sampling simulation following the gstools field interface.
@@ -43,7 +52,15 @@ Direct Sampling simulation following the gstools field interface.
 
 from gstools.mps.direct_sampling import DirectSampling
 from gstools.mps.model import MPSModel
+from gstools.mps.pyramid import Pyramid
 from gstools.mps.training_image import TrainingImage, Variable
 from gstools.mps.zone import Zone
 
-__all__ = ["DirectSampling", "MPSModel", "TrainingImage", "Variable", "Zone"]
+__all__ = [
+    "DirectSampling",
+    "MPSModel",
+    "Pyramid",
+    "TrainingImage",
+    "Variable",
+    "Zone",
+]

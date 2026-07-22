@@ -3808,5 +3808,319 @@ class TestPenaltyMatrixIntegration(unittest.TestCase):
         self.assertTrue(out_vals <= ti_vals)
 
 
+class TestPostProcessingParams(unittest.TestCase):
+    """MPSModel post-processing parameter validation (Me13 §4)."""
+
+    def _ti(self):
+        return gs.TrainingImage(np.zeros((8, 8)), categorical=True)
+
+    def test_defaults(self):
+        model = gs.MPSModel(self._ti())
+        self.assertEqual(model.post_processing, 0)
+        self.assertEqual(model.post_processing_factor, 1.0)
+
+    def test_accepts_valid(self):
+        model = gs.MPSModel(
+            self._ti(), post_processing=2, post_processing_factor=2.0
+        )
+        self.assertEqual(model.post_processing, 2)
+        self.assertEqual(model.post_processing_factor, 2.0)
+        model.post_processing = 1
+        model.post_processing_factor = 4.0
+        self.assertEqual(model.post_processing, 1)
+        self.assertEqual(model.post_processing_factor, 4.0)
+
+    def test_rejects_negative_passes(self):
+        with self.assertRaises(ValueError):
+            gs.MPSModel(self._ti(), post_processing=-1)
+
+    def test_rejects_factor_below_one(self):
+        with self.assertRaises(ValueError):
+            gs.MPSModel(self._ti(), post_processing_factor=0.5)
+
+
+def _isolated_count(field):
+    """Count cells whose value differs from ALL axis-neighbours (noise proxy)."""
+    f = np.asarray(field)
+    n = np.zeros(f.shape, dtype=int)
+    same = np.zeros(f.shape, dtype=int)
+    for ax in range(f.ndim):
+        for sh in (1, -1):
+            rolled = np.roll(f, sh, axis=ax)
+            valid = np.ones(f.shape, dtype=bool)
+            edge = [slice(None)] * f.ndim
+            edge[ax] = 0 if sh == 1 else -1
+            valid[tuple(edge)] = False
+            n += valid
+            same += valid & (rolled == f)
+    return int(np.sum((same == 0) & (n > 0)))
+
+
+class TestPostProcessingPass(unittest.TestCase):
+    """Me13 §4 / CASE 3: re-simulation with fully informed neighbourhoods."""
+
+    def setUp(self):
+        rng = np.random.RandomState(42)
+        ti = np.zeros((40, 40))
+        ti[:, 20:] = 1.0
+        flip = rng.rand(40, 40) < 0.05
+        ti[flip] = 1.0 - ti[flip]
+        self.ti_data = ti
+
+    def _run(self, seed=20260717, cond=None, num_threads=None, **model_kw):
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=8)
+        model = gs.MPSModel(
+            ti, scan_fraction=0.25, threshold=0.2, **model_kw
+        )
+        ds = gs.DirectSampling(model, seed=seed)
+        if cond is not None:
+            ds.set_condition(*cond)
+        if num_threads is not None:
+            ds.num_threads = num_threads
+        return ds((np.arange(24.0), np.arange(24.0)), store=False)
+
+    def test_noop_matches_default(self):
+        base = self._run()
+        noop = self._run(post_processing=0, post_processing_factor=2.0)
+        np.testing.assert_array_equal(base, noop)
+
+    def test_subset_property_after_passes(self):
+        field = self._run(post_processing=2, post_processing_factor=2.0)
+        self.assertTrue(np.isin(field, np.unique(self.ti_data)).all())
+
+    def test_conditioning_preserved_exactly(self):
+        cond = (([2.0, 10.0, 21.0], [3.0, 15.0, 8.0]), [1.0, 0.0, 1.0])
+        field = self._run(post_processing=2, cond=cond)
+        self.assertEqual(field[2, 3], 1.0)
+        self.assertEqual(field[10, 15], 0.0)
+        self.assertEqual(field[21, 8], 1.0)
+
+    def test_deterministic_given_seed(self):
+        a = self._run(post_processing=1)
+        b = self._run(post_processing=1)
+        np.testing.assert_array_equal(a, b)
+
+    def test_thread_count_invariance(self):
+        a = self._run(post_processing=1, num_threads=1)
+        b = self._run(post_processing=1, num_threads=4)
+        np.testing.assert_array_equal(a, b)
+
+    def test_noise_not_increased(self):
+        # Me13 CASE 3 (quantified): a post-pass must not add isolated-cell
+        # noise on a two-facies TI at the pinned seed.
+        noisy = self._run(post_processing=0)
+        cleaned = self._run(post_processing=1)
+        self.assertLessEqual(_isolated_count(cleaned), _isolated_count(noisy))
+
+    def test_multivariate_joint_subset(self):
+        a = self.ti_data
+        b = 1.0 - a
+        ti = gs.TrainingImage(
+            [
+                Variable("A", a, categorical=True, n_neighbors=6),
+                Variable("B", b, categorical=True, n_neighbors=6),
+            ]
+        )
+        model = gs.MPSModel(
+            ti, scan_fraction=0.25, threshold=0.2, post_processing=1
+        )
+        ds = gs.DirectSampling(model, seed=3)
+        out = ds((np.arange(16.0), np.arange(16.0)), store=False)
+        pairs_ti = set(zip(a.ravel(), b.ravel()))
+        pairs_sim = set(zip(out["A"].ravel(), out["B"].ravel()))
+        self.assertTrue(pairs_sim <= pairs_ti)
+
+
+class TestPostProcessingEngine(unittest.TestCase):
+    """ds_simulate-level post-processing behaviour."""
+
+    def _simulate(self, post_processing, seed=7, post_processing_factor=1.0):
+        from gstools.mps.simulate import ds_simulate
+
+        ti_data = np.zeros((30, 30))
+        ti_data[:, 15:] = 1.0
+        ti = gs.TrainingImage(ti_data, categorical=True, n_neighbors=6)
+        return ds_simulate(
+            training_image=ti,
+            sim_shape=(15, 15),
+            threshold=0.2,
+            scan_fraction=0.3,
+            rng_path=gs.random.RNG(seed).random,
+            rng_nodes=gs.random.RNG(seed + 1).random,
+            conditions={(0, 0): {None: 1.0}},
+            post_processing=post_processing,
+            post_processing_factor=post_processing_factor,
+        )[None]
+
+    def test_p0_bit_identical_to_omitted(self):
+        from gstools.mps.simulate import ds_simulate
+
+        ti_data = np.zeros((30, 30))
+        ti_data[:, 15:] = 1.0
+        ti = gs.TrainingImage(ti_data, categorical=True, n_neighbors=6)
+        kwargs = dict(
+            training_image=ti,
+            sim_shape=(15, 15),
+            threshold=0.2,
+            scan_fraction=0.3,
+        )
+        a = ds_simulate(
+            rng_path=gs.random.RNG(7).random,
+            rng_nodes=gs.random.RNG(8).random,
+            **kwargs,
+        )[None]
+        b = ds_simulate(
+            rng_path=gs.random.RNG(7).random,
+            rng_nodes=gs.random.RNG(8).random,
+            post_processing=0,
+            **kwargs,
+        )[None]
+        np.testing.assert_array_equal(a, b)
+
+    def test_pass_changes_field_but_keeps_subset_and_conditioning(self):
+        base = self._simulate(0)
+        post = self._simulate(1)
+        self.assertEqual(post[0, 0], 1.0)  # conditioning survives
+        self.assertTrue(np.isin(post, [0.0, 1.0]).all())
+        self.assertFalse(np.array_equal(base, post))  # the pass did work
+
+    def test_pf_divides_effort_and_stays_valid(self):
+        post = self._simulate(1, post_processing_factor=4.0)
+        self.assertTrue(np.isin(post, [0.0, 1.0]).all())
+
+
+class TestPyramidConfig(unittest.TestCase):
+    """Pyramid config validation (Straubhaar 2020 via J22 §4.1)."""
+
+    def test_valid_and_properties(self):
+        p = gs.Pyramid(levels=2, reduction=2)
+        self.assertEqual((p.levels, p.reduction), (2, 2))
+
+    def test_rejects_bad_levels_and_reduction(self):
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=0)
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=1, reduction=1)
+
+    def test_method_kind_mismatch(self):
+        cat = gs.TrainingImage(np.zeros((8, 8)), categorical=True)
+        cont = gs.TrainingImage(
+            np.linspace(0, 1, 64).reshape(8, 8), categorical=False
+        )
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=1, method="majority").resolve_methods(cont)
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=1, method="average").resolve_methods(cat)
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=1, method="bogus").resolve_methods(cat)
+
+    def test_default_methods_per_kind(self):
+        cat = gs.TrainingImage(np.zeros((8, 8)), categorical=True)
+        cont = gs.TrainingImage(
+            np.linspace(0, 1, 64).reshape(8, 8), categorical=False
+        )
+        self.assertEqual(
+            gs.Pyramid(levels=1).resolve_methods(cat), {None: "majority"}
+        )
+        self.assertEqual(
+            gs.Pyramid(levels=1).resolve_methods(cont), {None: "subsample"}
+        )
+
+    def test_var_levels_validation(self):
+        ti = gs.TrainingImage(
+            [
+                Variable("A", np.zeros((8, 8)), categorical=True),
+                Variable("B", np.zeros((8, 8)), categorical=True),
+            ]
+        )
+        out = gs.Pyramid(levels=2, var_levels={"B": 0}).resolve_var_levels(ti)
+        self.assertEqual(out, {"A": 2, "B": 0})
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=2, var_levels={"C": 1}).resolve_var_levels(ti)
+        with self.assertRaises(ValueError):
+            gs.Pyramid(levels=2, var_levels={"A": 3}).resolve_var_levels(ti)
+        with self.assertRaises(ValueError):
+            # nobody present at the coarsest level
+            gs.Pyramid(
+                levels=2, var_levels={"A": 1, "B": 0}
+            ).resolve_var_levels(ti)
+
+
+class TestPyramidCoarsening(unittest.TestCase):
+    """Coarsening operator unit oracles (hand-computed)."""
+
+    def test_majority_2d_and_tie_breaks_to_smallest(self):
+        from gstools.mps.pyramid import _coarsen_array
+
+        a = np.array([[0.0, 1.0], [1.0, 2.0]])
+        self.assertEqual(_coarsen_array(a, 2, "majority")[0, 0], 1.0)
+        tie = np.array([[0.0, 1.0], [1.0, 0.0]])
+        self.assertEqual(_coarsen_array(tie, 2, "majority")[0, 0], 0.0)
+
+    def test_subsample_3d_odd_shape(self):
+        from gstools.mps.pyramid import _coarsen_array
+
+        a = np.arange(27.0).reshape(3, 3, 3)
+        out = _coarsen_array(a, 2, "subsample")
+        self.assertEqual(out.shape, (2, 2, 2))
+        self.assertEqual(out[0, 0, 0], a[0, 0, 0])
+        self.assertEqual(out[1, 1, 1], a[2, 2, 2])
+
+    def test_average_nan_aware_partial_edge_block(self):
+        from gstools.mps.pyramid import _coarsen_array
+
+        a = np.array([[1.0, 3.0, 5.0], [1.0, 3.0, np.nan]])
+        out = _coarsen_array(a, 2, "average")
+        self.assertEqual(out.shape, (1, 2))
+        self.assertAlmostEqual(out[0, 0], 2.0)
+        self.assertAlmostEqual(out[0, 1], 5.0)
+
+    def test_coarsen_ti_preserves_metadata(self):
+        from gstools.mps.pyramid import _coarsen_ti
+
+        ti = gs.TrainingImage(
+            [
+                Variable(
+                    "A",
+                    np.zeros((8, 8)),
+                    categorical=True,
+                    n_neighbors=5,
+                    max_radius=3.0,
+                ),
+                Variable(
+                    "B",
+                    np.linspace(0, 1, 64).reshape(8, 8),
+                    categorical=False,
+                    distance="l2",
+                ),
+            ],
+            distance_power=1.0,
+        )
+        out = _coarsen_ti(
+            ti, 2, {"A": "majority", "B": "subsample"}, keep={"A", "B"}
+        )
+        self.assertEqual(out.variable("A").data.shape, (4, 4))
+        self.assertEqual(out.variable("A").n_neighbors, 5)
+        self.assertEqual(out.variable("A").max_radius, 3.0)
+        self.assertEqual(out.variable("B").distance, "l2")
+        self.assertEqual(out.distance_power, 1.0)
+        dropped = _coarsen_ti(ti, 2, {"A": "majority"}, keep={"A"})
+        self.assertEqual([v.name for v in dropped.variables], ["A"])
+
+    def test_coarsen_conditions_nearest_anchor_and_collision(self):
+        from gstools.mps.pyramid import _coarsen_conditions
+
+        conds = {
+            (0, 0): {None: 1.0},  # -> coarse (0, 0), dist 0
+            (1, 1): {None: 2.0},  # -> coarse (1, 1) anchor (2,2), dist 2
+            (2, 2): {None: 3.0},  # -> coarse (1, 1) anchor (2,2), dist 0: wins
+            (5, 5): {None: 4.0},  # -> clipped to coarse (2, 2) on a 6x6 grid
+        }
+        out = _coarsen_conditions(conds, 2, (6, 6))
+        self.assertEqual(out[(0, 0)], {None: 1.0})
+        self.assertEqual(out[(1, 1)], {None: 3.0})
+        self.assertEqual(out[(2, 2)], {None: 4.0})
+
+
 if __name__ == "__main__":
     unittest.main()

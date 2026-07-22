@@ -7,7 +7,7 @@ simulation by calling the stateless `neighbors`, `scan`, and `runner` modules.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import prod
 
 import numpy as np
@@ -157,6 +157,9 @@ class _DirectSamplingEngine:
         path="random",
         zone_tis=None,
         zone_selector=None,
+        preset=None,
+        post_processing=0,
+        post_processing_factor=1.0,
     ):
         self.training_image = training_image
         self.variables = [v.name for v in training_image.variables]
@@ -210,6 +213,30 @@ class _DirectSamplingEngine:
                     self.sg[v][idx] = val
                     self.is_cond[v][idx] = True
                     self.informed[v][idx] = True
+
+        # Preset values (pyramid transfer): informed but NOT conditioning —
+        # excluded from the main path (non-NaN), available as neighbours from
+        # the start (vmap -1), re-simulated by post-processing passes.
+        # User hard data wins on collision.
+        if preset:
+            for idx, vd in preset.items():
+                for v, val in vd.items():
+                    if self.is_cond[v][idx]:
+                        continue
+                    self.sg[v][idx] = val
+                    self.informed[v][idx] = True
+
+        self.post_processing = int(post_processing)
+        self.post_processing_factor = float(post_processing_factor)
+        self._rng_path = rng_path
+        self._rng_nodes = rng_nodes
+        # Post-pass visit order mirrors the main-path mode; explicit path
+        # arrays have no meaning for a full-grid re-visit -> random.
+        self._path_mode = (
+            "sequential"
+            if isinstance(path, str) and path == "sequential"
+            else "random"
+        )
 
         self.max_radius_per_var = {
             v.name: v.max_radius for v in training_image.variables
@@ -724,7 +751,81 @@ class _DirectSamplingEngine:
             if executor is not None:
                 executor.shutdown(wait=True)
 
+        self._run_post_passes(progress=progress)
         return self.sg
+
+    def _run_post_passes(self, progress=None):
+        """Post-processing (Meerschman2013 §4 / CASE 3).
+
+        Re-simulates every node with >= 1 non-conditioned variable using a
+        fully informed neighbourhood: a pass-scoped all ``-1`` vmap makes
+        every informed cell available (a node never neighbours itself —
+        ``offset_arr`` excludes the zero offset); erasing the node's
+        ``informed`` flag suppresses the collocated ``h=0`` self-constraint
+        that would otherwise anchor the re-draw to its own stale value.
+        Passes run strictly serially
+        (Gauss–Seidel: earlier re-simulated nodes feed later ones) — the
+        DAG machinery encodes path-predecessor availability, which does not
+        apply here — so output is deterministic for any thread count.
+        ``scan_fraction`` and per-variable ``n_neighbors`` are divided by
+        ``post_processing_factor`` for the duration (Me13 §4).
+        """
+        if self.post_processing <= 0:
+            return
+        resim = np.zeros(self.sim_shape, dtype=bool)
+        for v in self.variables:
+            resim |= ~self.is_cond[v]
+        base = np.argwhere(resim)
+        if not len(base):
+            return
+        p_f = self.post_processing_factor
+        saved = (self.n_k, self.domains, self.vmap, self._neighbor_cache)
+        self.n_k = {
+            v: max(1, int(round(n / p_f))) for v, n in self.n_k.items()
+        }
+        pp_frac = self.scan_fraction / p_f
+        self.domains = [
+            replace(
+                d, scan_config=replace(d.scan_config, scan_fraction=pp_frac)
+            )
+            for d in self.domains
+        ]
+        sg_size = int(np.prod(self.sim_shape))
+        self.vmap = {
+            v: np.full(sg_size, -1, dtype=np.intp) for v in self.variables
+        }
+        self._neighbor_cache = None
+        try:
+            for _ in range(self.post_processing):
+                if self._path_mode == "sequential":
+                    order = base
+                else:
+                    order = base[self._rng_path.permutation(len(base))]
+                u_start = self._rng_nodes.uniform(size=len(order))
+                u_fb = self._rng_nodes.uniform(size=(len(order), self.dim))
+                update, close = _make_progress(progress, len(order), "DS-post")
+                try:
+                    for i in range(len(order)):
+                        x_i = order[i]
+                        x_t = tuple(int(c) for c in x_i)
+                        for v in self.variables:
+                            if not self.is_cond[v][x_t]:
+                                self.sg[v][x_t] = np.nan
+                                self.informed[v][x_t] = False
+                        result = self._simulate_node(
+                            0, x_i, u_start[i], u_fb[i]
+                        )
+                        self._write_result(x_t, result)
+                        update()
+                finally:
+                    close()
+        finally:
+            (
+                self.n_k,
+                self.domains,
+                self.vmap,
+                self._neighbor_cache,
+            ) = saved
 
 
 def ds_simulate(
@@ -745,6 +846,9 @@ def ds_simulate(
     path="random",
     zone_tis=None,
     zone_selector=None,
+    post_processing=0,
+    post_processing_factor=1.0,
+    preset=None,
 ):
     """Node-wise multivariate Direct Sampling (Mariethoz2010 §3, Eq. 8).
 
@@ -824,6 +928,27 @@ def ds_simulate(
         node's scan/window/fallback draw uses; RNG consumption and the DAG
         are untouched, so output stays deterministic and thread-count
         invariant regardless of zoning.
+    post_processing : int, optional
+        Number of post-processing passes (Meerschman2013 §4 / CASE 3) run
+        after the main path completes. Each pass re-simulates every node
+        that has at least one non-conditioned variable, using a fully
+        informed neighbourhood (every other node's current value is an
+        eligible neighbour, `n_neighbors`/`max_radius` permitting) drawn in
+        a fresh random (or sequential, matching ``path``) order. Passes run
+        strictly serially regardless of ``num_threads``. ``0`` (default) →
+        no post-processing; bit-identical to omitting the parameter and
+        consumes no extra RNG draws.
+    post_processing_factor : float, optional
+        Divides ``scan_fraction`` and every variable's ``n_neighbors``
+        (floored at 1) during post-processing passes only (Meerschman2013
+        §4): a larger factor trades pattern fidelity for speed on the
+        (typically much more numerous) post-pass visits. Ignored when
+        ``post_processing`` is ``0``. Default: ``1.0`` (no reduction).
+    preset : dict or None, optional
+        ``{node_index: {variable: value}}`` initially-informed values that
+        are not conditioning — used by the pyramid transfer; re-simulated
+        by post-processing passes; user conditioning wins on collision.
+        ``None`` (default) → no preset values.
 
     Returns
     -------
@@ -846,5 +971,8 @@ def ds_simulate(
         path=path,
         zone_tis=zone_tis,
         zone_selector=zone_selector,
+        preset=preset,
+        post_processing=post_processing,
+        post_processing_factor=post_processing_factor,
     )
     return engine.run(num_threads=num_threads, progress=progress)

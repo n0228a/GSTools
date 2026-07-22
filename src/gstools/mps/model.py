@@ -44,6 +44,26 @@ def _validate_threshold(value):
     return float(value)
 
 
+def _validate_post_processing(value):
+    """Validate post-processing pass count p >= 0 (Me13 §4)."""
+    v = int(value)
+    if v < 0:
+        raise ValueError(
+            f"MPSModel: post_processing must be >= 0, got {value!r}"
+        )
+    return v
+
+
+def _validate_post_processing_factor(value):
+    """Validate p_f >= 1 (Me13 §4 divides f and n by p_f to SAVE cpu)."""
+    v = float(value)
+    if v < 1.0:
+        raise ValueError(
+            f"MPSModel: post_processing_factor must be >= 1, got {value!r}"
+        )
+    return v
+
+
 def _validate_rotation(rotation, ndim):
     """Grid-free rotation validation; returns the spec unchanged."""
     if rotation is None:
@@ -160,6 +180,20 @@ class MPSModel:
         Zonation regions for non-stationary simulation. Each zone TI must
         have the same ``ndim``, variable names, and categorical kind per
         variable as the primary TI. Default: ``[]`` (single-TI simulation).
+    post_processing : :class:`int`, optional
+        Number of post-processing passes p (Meerschman et al. 2013, §4).
+        Each pass re-simulates every non-conditioning node with a fully
+        informed neighbourhood (search parameters divided by
+        ``post_processing_factor``) to remove simulation noise.
+        0 (default) disables post-processing. Me13 §7
+        advises always adding at least one post-processing step (p=1) for
+        categorical simulations, for noise removal.
+    post_processing_factor : :class:`float`, optional
+        Factor p_f >= 1 to divide ``scan_fraction`` and ``n_neighbors``
+        during post-processing passes (Me13 §4). Values > 1 reduce the
+        search effort per pass (cheaper, coarser re-simulation).
+        Default: 1.0 (use original parameters). Me13 finds p_f has little
+        effect in general and recommends p_f=1.
     """
 
     def __init__(
@@ -172,6 +206,8 @@ class MPSModel:
         rotation=None,
         scale=None,
         zones=None,
+        post_processing=0,
+        post_processing_factor=1.0,
     ):
         if not isinstance(ti, TrainingImage):
             raise TypeError(
@@ -185,6 +221,10 @@ class MPSModel:
         self._rotation = _validate_rotation(rotation, ti.ndim)
         self._scale = _validate_scale(scale)
         self._zones = _validate_zones(zones, ti)
+        self._post_processing = _validate_post_processing(post_processing)
+        self._post_processing_factor = _validate_post_processing_factor(
+            post_processing_factor
+        )
 
     @property
     def ti(self):
@@ -228,6 +268,24 @@ class MPSModel:
         self._boundary = _validate_boundary(value)
 
     @property
+    def post_processing(self):
+        """:class:`int`: Number of post-processing passes p (Me13 §4). 0 = off."""
+        return self._post_processing
+
+    @post_processing.setter
+    def post_processing(self, value):
+        self._post_processing = _validate_post_processing(value)
+
+    @property
+    def post_processing_factor(self):
+        """:class:`float`: p_f — scan_fraction and n_neighbors are divided by this during post-passes."""
+        return self._post_processing_factor
+
+    @post_processing_factor.setter
+    def post_processing_factor(self, value):
+        self._post_processing_factor = _validate_post_processing_factor(value)
+
+    @property
     def rotation(self):
         """Rotation spec (scalar, vector, array, or callable); ``None`` → stationary identity."""
         return self._rotation
@@ -249,6 +307,8 @@ class MPSModel:
             threshold=0.0,
             cond_weight=1.0,
             boundary="strict",
+            post_processing=0,
+            post_processing_factor=1.0,
         )
         for name, default in defaults.items():
             val = getattr(self, f"_{name}")
