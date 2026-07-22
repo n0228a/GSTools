@@ -3931,6 +3931,96 @@ class TestPostProcessingPass(unittest.TestCase):
         self.assertTrue(pairs_sim <= pairs_ti)
 
 
+class TestPostProcessingPath(unittest.TestCase):
+    """post_processing_path: post-pass visit order (implementation extension,
+    not prescribed by Me13 §4)."""
+
+    def setUp(self):
+        rng = np.random.RandomState(42)
+        ti = np.zeros((40, 40))
+        ti[:, 20:] = 1.0
+        flip = rng.rand(40, 40) < 0.05
+        ti[flip] = 1.0 - ti[flip]
+        self.ti_data = ti
+
+    def _run(self, seed=20260717, cond=None, path="random", **model_kw):
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=8)
+        model = gs.MPSModel(
+            ti,
+            scan_fraction=0.25,
+            threshold=0.2,
+            post_processing=1,
+            **model_kw,
+        )
+        ds = gs.DirectSampling(model, seed=seed)
+        if cond is not None:
+            ds.set_condition(*cond)
+        return ds((np.arange(24.0), np.arange(24.0)), path=path, store=False)
+
+    def test_default_inherits_main_mode(self):
+        a = self._run(path="sequential")
+        b = self._run(path="sequential", post_processing_path="sequential")
+        np.testing.assert_array_equal(a, b)
+
+    def test_none_equals_random_for_random_main_path(self):
+        a = self._run()
+        b = self._run(post_processing_path="random")
+        np.testing.assert_array_equal(a, b)
+
+    def test_same_is_deterministic_and_valid(self):
+        cond = (([5.0], [5.0]), [1.0])
+        a = self._run(post_processing_path="same", cond=cond)
+        b = self._run(post_processing_path="same", cond=cond)
+        np.testing.assert_array_equal(a, b)
+        self.assertTrue(np.isin(a, np.unique(self.ti_data)).all())
+        self.assertEqual(a[5, 5], 1.0)
+
+    def test_explicit_raster_equals_sequential(self):
+        raster = np.argwhere(np.ones((24, 24), dtype=bool))
+        a = self._run(post_processing_path=raster)
+        b = self._run(post_processing_path="sequential")
+        np.testing.assert_array_equal(a, b)
+
+    def test_invalid_string_and_shape_raise(self):
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=8)
+        with self.assertRaises(ValueError):
+            gs.MPSModel(ti, post_processing_path="bogus")
+        with self.assertRaises(ValueError):
+            gs.MPSModel(ti, post_processing_path=np.array([1, 2, 3]))
+
+    def test_explicit_path_missing_nodes_raises(self):
+        half = np.argwhere(np.ones((24, 24), dtype=bool))[:288]
+        with self.assertRaises(ValueError):
+            self._run(post_processing_path=half)
+
+    def test_pyramid_rejects_explicit_post_path(self):
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=8)
+        raster = np.argwhere(np.ones((24, 24), dtype=bool))
+        model = gs.MPSModel(
+            ti,
+            scan_fraction=0.25,
+            threshold=0.2,
+            pyramid=gs.Pyramid(levels=1),
+            post_processing=1,
+            post_processing_path=raster,
+        )
+        ds = gs.DirectSampling(model, seed=20260717)
+        with self.assertRaises(ValueError):
+            ds((np.arange(24.0), np.arange(24.0)), store=False)
+
+        model_same = gs.MPSModel(
+            ti,
+            scan_fraction=0.25,
+            threshold=0.2,
+            pyramid=gs.Pyramid(levels=1),
+            post_processing=1,
+            post_processing_path="same",
+        )
+        ds_same = gs.DirectSampling(model_same, seed=20260717)
+        field = ds_same((np.arange(24.0), np.arange(24.0)), store=False)
+        self.assertTrue(np.isin(field, np.unique(self.ti_data)).all())
+
+
 class TestPostProcessingEngine(unittest.TestCase):
     """ds_simulate-level post-processing behaviour."""
 
@@ -4120,6 +4210,241 @@ class TestPyramidCoarsening(unittest.TestCase):
         self.assertEqual(out[(0, 0)], {None: 1.0})
         self.assertEqual(out[(1, 1)], {None: 3.0})
         self.assertEqual(out[(2, 2)], {None: 4.0})
+
+
+class TestEnginePreset(unittest.TestCase):
+    """preset values: informed, not conditioning, re-simulatable."""
+
+    def _kwargs(self, seed=11):
+        ti_data = np.zeros((20, 20))
+        ti_data[:, 10:] = 1.0
+        ti = gs.TrainingImage(ti_data, categorical=True, n_neighbors=4)
+        return dict(
+            training_image=ti,
+            sim_shape=(10, 10),
+            threshold=0.2,
+            scan_fraction=0.5,
+            rng_path=gs.random.RNG(seed).random,
+            rng_nodes=gs.random.RNG(seed + 1).random,
+        )
+
+    def test_preset_survives_main_pass(self):
+        from gstools.mps.simulate import ds_simulate
+
+        out = ds_simulate(
+            preset={(4, 4): {None: 1.0}, (5, 5): {None: 0.0}},
+            **self._kwargs(),
+        )[None]
+        self.assertEqual(out[4, 4], 1.0)
+        self.assertEqual(out[5, 5], 0.0)
+
+    def test_conditioning_beats_preset(self):
+        from gstools.mps.simulate import ds_simulate
+
+        out = ds_simulate(
+            conditions={(4, 4): {None: 0.0}},
+            preset={(4, 4): {None: 1.0}},
+            **self._kwargs(),
+        )[None]
+        self.assertEqual(out[4, 4], 0.0)
+
+    def test_post_processing_resimulates_preset(self):
+        from gstools.mps.simulate import ds_simulate
+
+        # 42.0 is not a TI value; a post-pass must replace it with one.
+        out = ds_simulate(
+            preset={(4, 4): {None: 42.0}},
+            post_processing=1,
+            **self._kwargs(),
+        )[None]
+        self.assertIn(out[4, 4], (0.0, 1.0))
+        self.assertTrue(np.isin(out, [0.0, 1.0]).all())
+
+
+class TestPyramidSimulation(unittest.TestCase):
+    """Coarse-to-fine pyramid runs (Straubhaar 2020 via J22 Test Case 1)."""
+
+    def setUp(self):
+        # 8-wide vertical stripes: survives two r=2 coarsenings (-> 2-wide).
+        ti = np.zeros((48, 48))
+        ti[:, (np.arange(48) // 8) % 2 == 0] = 1.0
+        self.ti_data = ti
+
+    def _simulate(self, seed=5, conditions=None, pyramid=None, **kw):
+        from gstools.mps.simulate import ds_simulate
+
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=6)
+        return ds_simulate(
+            training_image=ti,
+            sim_shape=(32, 32),
+            threshold=0.2,
+            scan_fraction=0.3,
+            rng_path=gs.random.RNG(seed).random,
+            rng_nodes=gs.random.RNG(seed + 1).random,
+            conditions=conditions,
+            pyramid=pyramid or gs.Pyramid(levels=2, reduction=2),
+            **kw,
+        )[None]
+
+    def test_subset_property_and_shape(self):
+        out = self._simulate()
+        self.assertEqual(out.shape, (32, 32))
+        self.assertTrue(np.isin(out, [0.0, 1.0]).all())
+
+    def test_deterministic_given_seed(self):
+        np.testing.assert_array_equal(self._simulate(), self._simulate())
+
+    def test_thread_count_invariance(self):
+        a = self._simulate(num_threads=1)
+        b = self._simulate(num_threads=4)
+        np.testing.assert_array_equal(a, b)
+
+    def test_conditioning_honored_at_level0(self):
+        conds = {(3, 3): {None: 1.0}, (20, 11): {None: 0.0}}
+        out = self._simulate(conditions=conds)
+        self.assertEqual(out[3, 3], 1.0)
+        self.assertEqual(out[20, 11], 0.0)
+
+    def test_average_plus_postprocessing_restores_subset(self):
+        from gstools.mps.simulate import ds_simulate
+
+        ti_data = np.sin(np.linspace(0, 6 * np.pi, 48))[None, :] * np.ones(
+            (48, 1)
+        )
+        ti = gs.TrainingImage(ti_data, categorical=False, n_neighbors=6)
+        out = ds_simulate(
+            training_image=ti,
+            sim_shape=(24, 24),
+            threshold=0.1,
+            scan_fraction=0.3,
+            rng_path=gs.random.RNG(9).random,
+            rng_nodes=gs.random.RNG(10).random,
+            pyramid=gs.Pyramid(levels=1, method="average"),
+            post_processing=1,
+        )[None]
+        self.assertTrue(np.isin(out.ravel(), ti_data.ravel()).all())
+
+    def test_var_levels_late_entry_runs(self):
+        from gstools.mps.simulate import ds_simulate
+
+        a = self.ti_data
+        b = 1.0 - a
+        ti = gs.TrainingImage(
+            [
+                Variable("A", a, categorical=True, n_neighbors=4),
+                Variable("B", b, categorical=True, n_neighbors=4),
+            ]
+        )
+        out = ds_simulate(
+            training_image=ti,
+            sim_shape=(16, 16),
+            threshold=0.2,
+            scan_fraction=0.3,
+            rng_path=gs.random.RNG(13).random,
+            rng_nodes=gs.random.RNG(14).random,
+            pyramid=gs.Pyramid(levels=1, var_levels={"B": 0}),
+        )
+        self.assertTrue(np.isin(out["A"], [0.0, 1.0]).all())
+        self.assertTrue(np.isin(out["B"], [0.0, 1.0]).all())
+
+    def test_pyramid_rejects_zones_maps_and_explicit_path(self):
+        from gstools.mps.simulate import ds_simulate
+
+        ti = gs.TrainingImage(self.ti_data, categorical=True, n_neighbors=4)
+        base = dict(
+            training_image=ti,
+            sim_shape=(8, 8),
+            threshold=0.2,
+            scan_fraction=0.3,
+            pyramid=gs.Pyramid(levels=1),
+        )
+        with self.assertRaises(ValueError):
+            ds_simulate(
+                rng_path=gs.random.RNG(1).random,
+                rng_nodes=gs.random.RNG(2).random,
+                path=np.argwhere(np.ones((8, 8), dtype=bool)),
+                **base,
+            )
+        with self.assertRaises(ValueError):
+            ds_simulate(
+                rng_path=gs.random.RNG(1).random,
+                rng_nodes=gs.random.RNG(2).random,
+                rotation_map=np.zeros((8, 8, 1)),
+                **base,
+            )
+        zone_ti = gs.TrainingImage(self.ti_data, categorical=True)
+        with self.assertRaises(ValueError):
+            ds_simulate(
+                rng_path=gs.random.RNG(1).random,
+                rng_nodes=gs.random.RNG(2).random,
+                zone_tis=[zone_ti],
+                zone_selector=np.zeros((8, 8), dtype=np.intp),
+                **base,
+            )
+        with self.assertRaises(ValueError):
+            ds_simulate(
+                rng_path=gs.random.RNG(1).random,
+                rng_nodes=gs.random.RNG(2).random,
+                preset={(0, 0): {None: 1.0}},
+                **base,
+            )
+
+
+class TestPyramidModelIntegration(unittest.TestCase):
+    """MPSModel/DirectSampling pyramid wiring and v1 exclusions."""
+
+    def setUp(self):
+        ti = np.zeros((48, 48))
+        ti[:, (np.arange(48) // 8) % 2 == 0] = 1.0
+        self.ti = gs.TrainingImage(ti, categorical=True, n_neighbors=6)
+
+    def test_end_to_end_with_conditioning_and_post(self):
+        model = gs.MPSModel(
+            self.ti,
+            scan_fraction=0.3,
+            threshold=0.2,
+            pyramid=gs.Pyramid(levels=2),
+            post_processing=1,
+        )
+        ds = gs.DirectSampling(model, seed=20260717)
+        ds.set_condition(([4.0, 20.0], [4.0, 9.0]), [1.0, 0.0])
+        field = ds((np.arange(32.0), np.arange(32.0)), store=False)
+        self.assertTrue(np.isin(field, [0.0, 1.0]).all())
+        self.assertEqual(field[4, 4], 1.0)
+        self.assertEqual(field[20, 9], 0.0)
+
+    def test_model_rejects_pyramid_with_zones(self):
+        zone_ti = gs.TrainingImage(np.zeros((48, 48)), categorical=True)
+        mask = np.zeros((32, 32), dtype=bool)
+        mask[:16] = True
+        zone = gs.Zone(zone_ti, where=mask)
+        with self.assertRaises(ValueError):
+            gs.MPSModel(
+                self.ti, pyramid=gs.Pyramid(levels=1), zones=[zone]
+            )
+
+    def test_model_rejects_pyramid_with_rotation_or_scale(self):
+        with self.assertRaises(ValueError):
+            gs.MPSModel(self.ti, pyramid=gs.Pyramid(levels=1), rotation=0.5)
+        with self.assertRaises(ValueError):
+            gs.MPSModel(self.ti, pyramid=gs.Pyramid(levels=1), scale=2.0)
+
+    def test_model_rejects_non_pyramid(self):
+        with self.assertRaises(TypeError):
+            gs.MPSModel(self.ti, pyramid="2 levels")
+
+    def test_model_fails_fast_on_method_kind_mismatch(self):
+        with self.assertRaises(ValueError):
+            gs.MPSModel(
+                self.ti, pyramid=gs.Pyramid(levels=1, method="average")
+            )
+
+    def test_call_rejects_explicit_path_with_pyramid(self):
+        model = gs.MPSModel(self.ti, pyramid=gs.Pyramid(levels=1))
+        ds = gs.DirectSampling(model, seed=1)
+        explicit = np.argwhere(np.ones((8, 8), dtype=bool))
+        with self.assertRaises(ValueError):
+            ds((np.arange(8.0), np.arange(8.0)), path=explicit, store=False)
 
 
 if __name__ == "__main__":

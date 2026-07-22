@@ -254,3 +254,81 @@ def _coarsen_conditions(conditions, r, fine_shape):
         ci: {v: val for v, (val, _) in slot.items()}
         for ci, slot in best.items()
     }
+
+
+def _run_pyramid(
+    simulate_fn, training_image, sim_shape, conditions, pyramid, **kwargs
+):
+    """Coarse-to-fine pyramid pass (Straubhaar 2020; J22 Test Case 1).
+
+    Builds the TI/conditions pyramid iteratively (level l+1 from level l),
+    simulates the coarsest level first, and injects each level's output
+    into the next finer level as ``preset`` values at the origin-anchored
+    fine nodes ``j * r`` — informed but re-simulatable, NOT hard
+    conditioning: user hard data wins on collision, and post-processing
+    passes (if configured in ``kwargs``) re-draw preset nodes from the
+    finer level's own TI.
+
+    Parameters
+    ----------
+    simulate_fn : callable
+        ``ds_simulate`` (passed in to avoid a circular import); called per
+        level with ``pyramid`` unset.
+    training_image : TrainingImage
+        Level-0 training image.
+    sim_shape : tuple of int
+        Level-0 simulation grid shape.
+    conditions : dict or None
+        ``{idx: {var: val}}`` level-0 hard data.
+    pyramid : Pyramid
+        Validated configuration.
+    **kwargs
+        Remaining ``ds_simulate`` keyword arguments (threshold,
+        scan_fraction, rng_path, rng_nodes, cond_weight, boundary,
+        num_threads, progress, path, post_processing,
+        post_processing_factor). RNG state is consumed sequentially across
+        levels, so output is deterministic given the seeds.
+
+    Returns
+    -------
+    dict
+        ``{variable: numpy.ndarray}`` — the level-0 result.
+    """
+    r = pyramid.reduction
+    methods = pyramid.resolve_methods(training_image)
+    var_levels = pyramid.resolve_var_levels(training_image)
+
+    tis = [training_image]
+    shapes = [tuple(int(s) for s in sim_shape)]
+    conds = [dict(conditions) if conditions else {}]
+    for lev in range(1, pyramid.levels + 1):
+        keep = {v for v, kl in var_levels.items() if kl >= lev}
+        tis.append(_coarsen_ti(tis[-1], r, methods, keep))
+        c = _coarsen_conditions(conds[-1], r, shapes[-1])
+        c = {
+            idx: {v: val for v, val in vd.items() if v in keep}
+            for idx, vd in c.items()
+        }
+        conds.append({idx: vd for idx, vd in c.items() if vd})
+        shapes.append(tuple(-(-s // r) for s in shapes[-1]))
+
+    preset = None
+    result = None
+    for lev in range(pyramid.levels, -1, -1):
+        result = simulate_fn(
+            training_image=tis[lev],
+            sim_shape=shapes[lev],
+            conditions=conds[lev] or None,
+            preset=preset,
+            **kwargs,
+        )
+        if lev > 0:
+            # Transfer: coarse node j sits at fine anchor j*r (always in
+            # bounds since shapes use ceil division).
+            preset = {
+                tuple(int(c) * r for c in cidx): {
+                    v: float(result[v][cidx]) for v in result
+                }
+                for cidx in np.ndindex(*shapes[lev])
+            }
+    return result

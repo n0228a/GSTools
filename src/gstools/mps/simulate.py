@@ -160,6 +160,7 @@ class _DirectSamplingEngine:
         preset=None,
         post_processing=0,
         post_processing_factor=1.0,
+        post_processing_path=None,
     ):
         self.training_image = training_image
         self.variables = [v.name for v in training_image.variables]
@@ -230,13 +231,17 @@ class _DirectSamplingEngine:
         self.post_processing_factor = float(post_processing_factor)
         self._rng_path = rng_path
         self._rng_nodes = rng_nodes
-        # Post-pass visit order mirrors the main-path mode; explicit path
-        # arrays have no meaning for a full-grid re-visit -> random.
-        self._path_mode = (
-            "sequential"
-            if isinstance(path, str) and path == "sequential"
-            else "random"
-        )
+        # Post-pass visit order: None inherits the main-path mode (an
+        # explicit main path array has no meaning for a full-grid re-visit
+        # -> random). Me13 §4 does not prescribe the post-pass order; the
+        # explicit option is an implementation extension.
+        if post_processing_path is None:
+            post_processing_path = (
+                "sequential"
+                if isinstance(path, str) and path == "sequential"
+                else "random"
+            )
+        self._post_path = post_processing_path
 
         self.max_radius_per_var = {
             v.name: v.max_radius for v in training_image.variables
@@ -775,8 +780,7 @@ class _DirectSamplingEngine:
         resim = np.zeros(self.sim_shape, dtype=bool)
         for v in self.variables:
             resim |= ~self.is_cond[v]
-        base = np.argwhere(resim)
-        if not len(base):
+        if not resim.any():
             return
         p_f = self.post_processing_factor
         saved = (self.n_k, self.domains, self.vmap, self._neighbor_cache)
@@ -797,10 +801,15 @@ class _DirectSamplingEngine:
         self._neighbor_cache = None
         try:
             for _ in range(self.post_processing):
-                if self._path_mode == "sequential":
-                    order = base
+                if (
+                    isinstance(self._post_path, str)
+                    and self._post_path == "same"
+                ):
+                    order = self._same_order(resim)
                 else:
-                    order = base[self._rng_path.permutation(len(base))]
+                    order = _build_path(
+                        resim, self._post_path, self._rng_path, self.sim_shape
+                    )
                 u_start = self._rng_nodes.uniform(size=len(order))
                 u_fb = self._rng_nodes.uniform(size=(len(order), self.dim))
                 update, close = _make_progress(progress, len(order), "DS-post")
@@ -827,6 +836,16 @@ class _DirectSamplingEngine:
                 self._neighbor_cache,
             ) = saved
 
+    def _same_order(self, resim):
+        """Main-pass visit order, then resim nodes outside it (presets) in raster order."""
+        rest = resim.copy()
+        if len(self.path):
+            rest[tuple(self.path.T)] = False
+        extra = np.argwhere(rest)
+        if not len(extra):
+            return self.path
+        return np.concatenate([self.path, extra])
+
 
 def ds_simulate(
     training_image,
@@ -848,7 +867,9 @@ def ds_simulate(
     zone_selector=None,
     post_processing=0,
     post_processing_factor=1.0,
+    post_processing_path=None,
     preset=None,
+    pyramid=None,
 ):
     """Node-wise multivariate Direct Sampling (Mariethoz2010 §3, Eq. 8).
 
@@ -944,17 +965,95 @@ def ds_simulate(
         §4): a larger factor trades pattern fidelity for speed on the
         (typically much more numerous) post-pass visits. Ignored when
         ``post_processing`` is ``0``. Default: ``1.0`` (no reduction).
+    post_processing_path : str, array-like, or None, optional
+        Visit order for the post-processing passes (an implementation
+        extension — Me13 §4 does not prescribe the post-pass order).
+        ``None`` (default) inherits the main-path mode: a ``"sequential"``
+        main ``path`` gives sequential post-passes, anything else gives a
+        fresh random permutation per pass, drawn from ``rng_path``
+        (unchanged pre-existing behaviour). ``"random"`` and
+        ``"sequential"`` behave as for the main ``path``. ``"same"`` reuses
+        the main pass's visit order, followed by any re-simulatable nodes
+        outside it (e.g. pyramid preset nodes) in raster order; it does not
+        consume ``rng_path``. An explicit ``(N, dim)`` integer array is
+        validated like an explicit main ``path`` but against the post-pass
+        node set (every node with at least one non-conditioned variable),
+        so it may include already-conditioned nodes (silently dropped).
     preset : dict or None, optional
         ``{node_index: {variable: value}}`` initially-informed values that
         are not conditioning — used by the pyramid transfer; re-simulated
         by post-processing passes; user conditioning wins on collision.
         ``None`` (default) → no preset values.
+    pyramid : Pyramid or None, optional
+        Multi-resolution coarse-to-fine pass (Straubhaar 2020; Juda2022
+        §4.1): builds a pyramid of coarsened TIs/conditions, simulates the
+        coarsest level first, and transfers each level's output into the
+        next finer level as ``preset`` (informed, not conditioning; user
+        hard data always wins). ``None`` (default) → no pyramid, single
+        level-0 simulation. **v1 exclusions** (raise ``ValueError``):
+        combined with ``zone_tis``/``zone_selector``, with
+        ``rotation_map``/``scale_map``, with an explicit ``path`` array,
+        with an explicit ``post_processing_path`` array, or with a
+        caller-supplied ``preset`` (the pyramid generates its own).
+        With ``Pyramid(method="average")`` on a continuous variable, the
+        transferred nodes are block means (not TI values); pass
+        ``post_processing >= 1`` to re-draw them from the TI and restore
+        the subset-of-TI-values property.
 
     Returns
     -------
     dict
         ``{variable: numpy.ndarray}`` — one simulated field per variable.
     """
+    if pyramid is not None:
+        from gstools.mps.pyramid import _run_pyramid
+
+        if zone_tis or zone_selector is not None:
+            raise ValueError(
+                "ds_simulate: pyramid is not supported together with zones."
+            )
+        if rotation_map is not None or scale_map is not None:
+            raise ValueError(
+                "ds_simulate: pyramid is not supported together with "
+                "rotation/scale maps."
+            )
+        if not isinstance(path, str):
+            raise ValueError(
+                "ds_simulate: an explicit path array is not supported with "
+                "a pyramid; use path='random' or 'sequential'."
+            )
+        if post_processing_path is not None and not isinstance(
+            post_processing_path, str
+        ):
+            raise ValueError(
+                "ds_simulate: an explicit post_processing_path array is not "
+                "supported with a pyramid; use 'random', 'sequential', or 'same'."
+            )
+        if preset is not None:
+            raise ValueError(
+                "ds_simulate: preset cannot be combined with pyramid "
+                "(the pyramid generates presets internally)."
+            )
+        return _run_pyramid(
+            ds_simulate,
+            training_image,
+            sim_shape,
+            conditions,
+            pyramid,
+            threshold=threshold,
+            scan_fraction=scan_fraction,
+            rng_path=rng_path,
+            rng_nodes=rng_nodes,
+            cond_weight=cond_weight,
+            boundary=boundary,
+            num_threads=num_threads,
+            progress=progress,
+            path=path,
+            post_processing=post_processing,
+            post_processing_factor=post_processing_factor,
+            post_processing_path=post_processing_path,
+        )
+
     engine = _DirectSamplingEngine(
         training_image,
         sim_shape,
@@ -974,5 +1073,6 @@ def ds_simulate(
         preset=preset,
         post_processing=post_processing,
         post_processing_factor=post_processing_factor,
+        post_processing_path=post_processing_path,
     )
     return engine.run(num_threads=num_threads, progress=progress)

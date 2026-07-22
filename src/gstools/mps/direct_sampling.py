@@ -202,7 +202,9 @@ class DirectSampling(Field):
             ``path_seed``.  An explicit integer array of shape ``(N, dim)``
             provides a caller-supplied visit order and must be a permutation
             of exactly the unknown-node set (missing nodes, extra nodes, and
-            duplicate rows all raise :class:`ValueError`).
+            duplicate rows all raise :class:`ValueError`).  Explicit arrays
+            are rejected when the model carries a :any:`Pyramid` (coarse
+            levels have different node sets).
             Default: ``"random"``
         mesh_type : :class:`str`, optional
             Grid type. Must be ``"structured"``.
@@ -307,6 +309,11 @@ class DirectSampling(Field):
                 if conditions
                 else None
             )
+        if self._mps_model.pyramid is not None and not isinstance(path, str):
+            raise ValueError(
+                "DirectSampling: an explicit path array is not supported "
+                "with a pyramid; use path='random' or 'sequential'."
+            )
         result = ds_simulate(
             training_image=self._ti,
             sim_shape=shape,
@@ -327,6 +334,8 @@ class DirectSampling(Field):
             zone_selector=selector,
             post_processing=self._mps_model.post_processing,
             post_processing_factor=self._mps_model.post_processing_factor,
+            post_processing_path=self._mps_model.post_processing_path,
+            pyramid=self._mps_model.pyramid,
         )
         # Branch only on the return type: multivariate → dict of named arrays;
         # univariate → bare array (unwrap the single None key).

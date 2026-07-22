@@ -4,6 +4,7 @@ import warnings
 
 import numpy as np
 
+from gstools.mps.pyramid import Pyramid
 from gstools.mps.training_image import TrainingImage
 from gstools.mps.zone import Zone
 
@@ -126,6 +127,50 @@ def _validate_zones(zones, primary_ti):
     return zones
 
 
+_VALID_POST_PATH = ("random", "sequential", "same")
+
+
+def _validate_post_processing_path(value):
+    """None -> inherit main-path mode; str from _VALID_POST_PATH; else (N, dim) array."""
+    if value is None or (isinstance(value, str) and value in _VALID_POST_PATH):
+        return value
+    if isinstance(value, str):
+        raise ValueError(
+            f"MPSModel: post_processing_path must be one of "
+            f"{_VALID_POST_PATH!r}, an (N, dim) integer array, or None "
+            f"(inherit the main path mode), got {value!r}"
+        )
+    arr = np.asarray(value)
+    if arr.ndim != 2:
+        raise ValueError(
+            f"MPSModel: an explicit post_processing_path must be a 2-D "
+            f"(N, dim) array, got shape {arr.shape!r}"
+        )
+    return arr
+
+
+def _validate_pyramid(pyramid, ti, zones, rotation, scale):
+    """Pyramid config validation incl. v1 exclusions (zones, rotation/scale)."""
+    if pyramid is None:
+        return None
+    if not isinstance(pyramid, Pyramid):
+        raise TypeError(
+            f"MPSModel: pyramid must be a Pyramid, got {type(pyramid)!r}"
+        )
+    if zones:
+        raise ValueError(
+            "MPSModel: pyramid is not supported together with zones."
+        )
+    if rotation is not None or scale is not None:
+        raise ValueError(
+            "MPSModel: pyramid is not supported together with rotation/scale."
+        )
+    # Fail fast on method/kind mismatches and var_levels errors.
+    pyramid.resolve_methods(ti)
+    pyramid.resolve_var_levels(ti)
+    return pyramid
+
+
 def _spec_repr(val):
     """Repr for a rotation/scale spec: callables by name, arrays by shape."""
     if callable(val):
@@ -194,6 +239,39 @@ class MPSModel:
         search effort per pass (cheaper, coarser re-simulation).
         Default: 1.0 (use original parameters). Me13 finds p_f has little
         effect in general and recommends p_f=1.
+    post_processing_path : :class:`str`, array-like, or None, optional
+        Visit order for the post-processing passes. This is an
+        implementation extension, not prescribed by the DS papers (Me13 §4
+        does not specify the post-pass order). Accepted forms:
+
+        - ``None`` (default): inherit the main-path mode — a
+          ``"sequential"`` main ``path`` gives sequential post-passes,
+          anything else gives a fresh random permutation per pass. This
+          preserves the pre-existing behaviour exactly.
+        - ``"random"``: fresh random permutation per pass, drawn from the
+          same RNG stream as the main path.
+        - ``"sequential"``: raster order, the same every pass; does not
+          consume the path RNG.
+        - ``"same"``: the main pass's visit order, followed by any
+          re-simulatable nodes not in it (e.g. pyramid preset nodes) in
+          raster order; does not consume the path RNG.
+        - an explicit ``(N, dim)`` integer array: validated the same way as
+          an explicit main ``path`` (duplicate rows and missing nodes raise
+          :class:`ValueError`), but against the *post-pass node set* — every
+          node with at least one non-conditioned variable — rather than the
+          main path's unknown-node set. This means an explicit
+          post-processing path may include already-conditioned nodes (a
+          full-grid raster/spiral works unchanged); such entries are
+          silently dropped.
+    pyramid : :any:`Pyramid`, optional
+        Multi-resolution pyramid configuration (Straubhaar, Renard &
+        Chugunova 2020; applied in Juda et al. 2022 §4.1). When set, the
+        simulation runs coarse-to-fine: the coarsest level is simulated
+        first and each level's result is injected into the next finer
+        level as re-simulatable preset values. Not supported together with
+        ``zones`` or ``rotation``/``scale`` (v1 exclusions); combining
+        either raises :class:`ValueError` at construction time. Default:
+        ``None`` (single-resolution simulation).
     """
 
     def __init__(
@@ -208,6 +286,8 @@ class MPSModel:
         zones=None,
         post_processing=0,
         post_processing_factor=1.0,
+        post_processing_path=None,
+        pyramid=None,
     ):
         if not isinstance(ti, TrainingImage):
             raise TypeError(
@@ -224,6 +304,12 @@ class MPSModel:
         self._post_processing = _validate_post_processing(post_processing)
         self._post_processing_factor = _validate_post_processing_factor(
             post_processing_factor
+        )
+        self._post_processing_path = _validate_post_processing_path(
+            post_processing_path
+        )
+        self._pyramid = _validate_pyramid(
+            pyramid, ti, self._zones, self._rotation, self._scale
         )
 
     @property
@@ -286,6 +372,15 @@ class MPSModel:
         self._post_processing_factor = _validate_post_processing_factor(value)
 
     @property
+    def post_processing_path(self):
+        """:class:`str`, array-like, or None: post-pass visit order. ``None`` inherits the main-path mode."""
+        return self._post_processing_path
+
+    @post_processing_path.setter
+    def post_processing_path(self, value):
+        self._post_processing_path = _validate_post_processing_path(value)
+
+    @property
     def rotation(self):
         """Rotation spec (scalar, vector, array, or callable); ``None`` → stationary identity."""
         return self._rotation
@@ -299,6 +394,11 @@ class MPSModel:
     def zones(self):
         """:class:`list` of :any:`Zone`: zonation regions (empty → single-TI simulation)."""
         return list(self._zones)
+
+    @property
+    def pyramid(self):
+        """:any:`Pyramid` or None: multi-resolution pyramid configuration."""
+        return self._pyramid
 
     def __repr__(self):
         args = [repr(self._ti)]
@@ -320,4 +420,10 @@ class MPSModel:
             args.append(f"scale={_spec_repr(self._scale)}")
         if self._zones:
             args.append(f"zones=[{len(self._zones)} zone(s)]")
+        if self._post_processing_path is not None:
+            ppp = self._post_processing_path
+            val = repr(ppp) if isinstance(ppp, str) else _spec_repr(ppp)
+            args.append(f"post_processing_path={val}")
+        if self._pyramid is not None:
+            args.append(f"pyramid={self._pyramid!r}")
         return f"MPSModel({', '.join(args)})"
