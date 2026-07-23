@@ -46,16 +46,16 @@ mud_ti = gs.TrainingImage(
 
 # 2. Zone geometry: a meandering channel belt across the floodplain
 # Both TIs stay at native 200x200 resolution -- no resampling.
-nx, ny = 700, 350
+nx, ny = 450, 280
 gx_idx, gy_idx = np.meshgrid(
     np.arange(nx, dtype=float), np.arange(ny, dtype=float), indexing="ij"
 )
 
-WAVELENGTH = 350.0  # 2 full meander cycles across nx=700
-AMPLITUDE = 80.0
+WAVELENGTH = 225.0  # 2 full meander cycles across nx=450
+AMPLITUDE = 65.0
 HALF_WIDTH = 45.0  # 90px total width, ~3.5x the measured 25px median grain diameter
 
-y_center = 175.0 + AMPLITUDE * np.sin(2.0 * np.pi * gx_idx / WAVELENGTH)
+y_center = 140.0 + AMPLITUDE * np.sin(2.0 * np.pi * gx_idx / WAVELENGTH)
 channel_mask = np.abs(gy_idx - y_center) <= HALF_WIDTH
 
 # 3. Model + simulation (no rotation, no scale -- nonstationarity removed
@@ -64,8 +64,8 @@ channel_mask = np.abs(gy_idx - y_center) <= HALF_WIDTH
 model = gs.MPSModel(
     mud_ti,
     zones=[gs.Zone(stone_ti, where=channel_mask)],
-    scan_fraction=0.4,
-    threshold=0.01,
+    scan_fraction=0.3,
+    threshold=0.1,
     post_processing=1,
     post_processing_factor=2.0,
 )
@@ -74,7 +74,7 @@ ds = gs.DirectSampling(model)
 x = np.arange(nx, dtype=float)
 y = np.arange(ny, dtype=float)
 print(f"Simulating zonated channel/floodplain field ({nx}x{ny})...")
-field = ds([x, y], seed=1, num_threads=8)
+field = ds([x, y], seed=1, num_threads=200)
 
 # 4. Verification: output values are a subset of each zone's TI values
 # (CLAUDE.md MPS validity criterion, checked per zone)
@@ -103,7 +103,7 @@ ax3.imshow(channel_mask.T, cmap="gray", origin="lower")
 x_line = np.arange(nx, dtype=float)
 ax3.plot(
     x_line,
-    175.0 + AMPLITUDE * np.sin(2.0 * np.pi * x_line / WAVELENGTH),
+    140.0 + AMPLITUDE * np.sin(2.0 * np.pi * x_line / WAVELENGTH),
     "r--",
     lw=1,
 )
@@ -119,4 +119,3 @@ plt.colorbar(im4, ax=ax4, fraction=0.046, pad=0.04)
 fig.tight_layout()
 plt.savefig("zonated_channel_floodplain.png")
 print("Saved zonated_channel_floodplain.png")
-
