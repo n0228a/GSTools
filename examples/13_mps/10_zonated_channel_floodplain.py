@@ -46,26 +46,29 @@ mud_ti = gs.TrainingImage(
 
 # 2. Zone geometry: a meandering channel belt across the floodplain
 # Both TIs stay at native 200x200 resolution -- no resampling.
-nx, ny = 450, 280
+nx, ny = 700, 350
 gx_idx, gy_idx = np.meshgrid(
     np.arange(nx, dtype=float), np.arange(ny, dtype=float), indexing="ij"
 )
 
-WAVELENGTH = 225.0  # 2 full meander cycles across nx=450
-AMPLITUDE = 65.0
+WAVELENGTH = 350.0  # 2 full meander cycles across nx=700
+AMPLITUDE = 80.0
 HALF_WIDTH = 45.0  # 90px total width, ~3.5x the measured 25px median grain diameter
 
-y_center = 140.0 + AMPLITUDE * np.sin(2.0 * np.pi * gx_idx / WAVELENGTH)
+y_center = 175.0 + AMPLITUDE * np.sin(2.0 * np.pi * gx_idx / WAVELENGTH)
 channel_mask = np.abs(gy_idx - y_center) <= HALF_WIDTH
 
 # 3. Model + simulation (no rotation, no scale -- nonstationarity removed
 # entirely: it collapsed neighbour lags in the channel and degraded the
 # floodplain fidelity even at scale=1, see design doc)
+# threshold/scan_fraction kept tight -- an empirical A/B test (loose 0.1 vs
+# tight 0.01 threshold on a small zoned grid) showed 0.1 visibly degrades
+# reproduction fidelity on BOTH sides of the zone boundary, not just one.
 model = gs.MPSModel(
     mud_ti,
     zones=[gs.Zone(stone_ti, where=channel_mask)],
-    scan_fraction=0.3,
-    threshold=0.1,
+    scan_fraction=0.4,
+    threshold=0.01,
     post_processing=1,
     post_processing_factor=2.0,
 )
@@ -103,7 +106,7 @@ ax3.imshow(channel_mask.T, cmap="gray", origin="lower")
 x_line = np.arange(nx, dtype=float)
 ax3.plot(
     x_line,
-    140.0 + AMPLITUDE * np.sin(2.0 * np.pi * x_line / WAVELENGTH),
+    175.0 + AMPLITUDE * np.sin(2.0 * np.pi * x_line / WAVELENGTH),
     "r--",
     lw=1,
 )
@@ -111,8 +114,7 @@ ax3.set_title("c) Zone geometry (channel belt + centerline)")
 ax3.axis("off")
 
 im4 = ax4.imshow(field.T, cmap="gray", origin="lower")
-ax4.contour(channel_mask.T, levels=[0.5], colors="r", linewidths=1)
-ax4.set_title("d) Simulation (channel margin overlaid)")
+ax4.set_title("d) Simulation")
 ax4.axis("off")
 plt.colorbar(im4, ax=ax4, fraction=0.046, pad=0.04)
 
