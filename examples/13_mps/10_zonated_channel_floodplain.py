@@ -38,10 +38,10 @@ if not os.path.exists(MUD_CACHE):
 mud_data = np.array(Image.open(MUD_CACHE)).astype(float)[:200, :200]
 
 stone_ti = gs.TrainingImage(
-    stone_data, categorical=False, distance="l2", n_neighbors=75
+    stone_data, categorical=False, distance="l1", n_neighbors=75
 )
 mud_ti = gs.TrainingImage(
-    mud_data, categorical=False, distance="l2", n_neighbors=75
+    mud_data, categorical=False, distance="l1", n_neighbors=75
 )
 
 # 2. Zone geometry: a meandering channel belt across the floodplain
