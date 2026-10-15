@@ -23,6 +23,7 @@ from gstools.mps.distance import (
     vec_lp_dist,
     vec_variation_dist,
 )
+from gstools.random import RNG
 
 __all__ = ["Variable", "TrainingImage"]
 
@@ -35,14 +36,58 @@ def _any_float_nan(*arrays):
     )
 
 
-def _data_range(arr):
-    """Continuous data range over *defined* cells (NaN excluded).
+_RANDPAIR_SEED = 20260904
+_RANDPAIR_SAMPLES = 200_000
 
-    Returns the ``max - min`` spread of the finite values, or ``1.0`` when the
-    array is constant or entirely undefined (avoids a zero/NaN normalizer).
+
+def _random_pair_scale(finite, p_norm):
+    """``(E|X - X'|^p)^(1/p)`` over distinct value pairs -- the expected
+    per-element distance contribution for a p-norm.
+
+    Exact and deterministic for ``p_norm`` 1 (Gini mean difference, via the
+    sorted-value identity) and 2 (``sqrt(2 s^2)``); other norms use a
+    fixed-seed pair subsample, so the result is still reproducible.
+    """
+    n = finite.size
+    if n < 2:
+        return 0.0
+    if p_norm == 1:
+        x = np.sort(finite.astype(np.float64))
+        i = np.arange(1, n + 1, dtype=np.float64)
+        return float(2.0 * np.sum((2.0 * i - n - 1.0) * x) / (n * (n - 1.0)))
+    if p_norm == 2:
+        return float(np.sqrt(2.0 * np.var(finite.astype(np.float64), ddof=1)))
+    rng = RNG(_RANDPAIR_SEED).random
+    k = min(n, _RANDPAIR_SAMPLES)
+    a = finite[rng.randint(0, n, size=k)].astype(np.float64)
+    b = finite[rng.randint(0, n, size=k)].astype(np.float64)
+    return float(np.mean(np.abs(a - b) ** p_norm) ** (1.0 / p_norm))
+
+
+def _data_range(arr, normalization="range", p_norm=None):
+    """Continuous-distance normalizer over *defined* cells (NaN excluded).
+
+    ``normalization="range"`` (default) returns the ``max - min`` spread of
+    the finite values. ``normalization="iqr"`` returns the interquartile
+    range (75th minus 25th percentile) instead -- less sensitive to a few
+    outlier values than the full range. ``normalization="randpair"`` returns
+    the expected random-pair distance for this variable's p-norm, which makes
+    ``E[distance] ~ 1`` per variable so that equal ``Variable`` weights carry
+    equal *effective* influence in a multivariate scan (see the class
+    docstring). Either way, ``1.0`` is returned when the array is constant,
+    entirely undefined, or the chosen spread is zero (avoids a zero/NaN
+    normalizer).
     """
     finite = arr[np.isfinite(arr)]
-    dmax = float(finite.max() - finite.min()) if finite.size else 0.0
+    if not finite.size:
+        return 1.0
+    if normalization == "iqr":
+        q75, q25 = np.percentile(finite, [75, 25])
+        dmax = float(q75 - q25)
+    elif normalization == "randpair":
+        dmax = _random_pair_scale(finite, 1 if p_norm is None else p_norm)
+    else:
+        dmax = float(finite.max() - finite.min())
     return dmax if dmax > 0 else 1.0
 
 
@@ -155,6 +200,7 @@ def _view_variable(var, slices):
             penalty_matrix=var._penalty_matrix,
             distance_power=var._distance_power,
             cond_weight=var._cond_weight,
+            normalization=var._normalization,
         )
 
 
@@ -169,6 +215,7 @@ _REPLACE_FIELDS = frozenset(
         "penalty_matrix",
         "distance_power",
         "cond_weight",
+        "normalization",
     }
 )
 
@@ -213,6 +260,11 @@ class Variable:
     cond_weight : float, optional
         Weight multiplier for this variable's conditioning nodes in the
         distance (Meerschman2013 §6, Mariethoz2010 para [26]). Default: 1.0.
+    normalization : str, optional
+        Continuous-distance normalizer for ``d_max``: ``"range"`` (default,
+        ``max - min`` over finite values) or ``"iqr"`` (interquartile range,
+        75th minus 25th percentile) -- less sensitive to outliers. Ignored
+        when ``categorical=True``.
     """
 
     def __init__(
@@ -228,6 +280,7 @@ class Variable:
         penalty_matrix=None,
         distance_power=0.0,
         cond_weight=1.0,
+        normalization="range",
     ):
         if name is not None and (
             not isinstance(name, str) or not name.isidentifier()
@@ -266,11 +319,19 @@ class Variable:
                 UserWarning,
                 stacklevel=2,
             )
+        if normalization not in ("range", "iqr", "randpair"):
+            raise ValueError(
+                "Variable: normalization must be 'range', 'iqr' or "
+                f"'randpair', got {normalization!r}."
+            )
+        self._normalization = normalization
         if not self._categorical:
             self._p_norm, self._variation_p_norm = _parse_distance(
                 self._distance
             )
-            self._d_max = _data_range(self._data)
+            self._d_max = _data_range(
+                self._data, self._normalization, self._p_norm
+            )
         else:
             self._p_norm = None
             self._variation_p_norm = None
@@ -411,6 +472,11 @@ class Variable:
         return self._cond_weight
 
     @property
+    def normalization(self):
+        """:class:`str`: Continuous-distance normalizer: ``"range"`` or ``"iqr"``."""
+        return self._normalization
+
+    @property
     def n_neighbors(self):
         """:class:`int`: Maximum neighbours in the data event."""
         return self._n_neighbors
@@ -444,6 +510,7 @@ class Variable:
             penalty_matrix=self._penalty_matrix,
             distance_power=self._distance_power,
             cond_weight=self._cond_weight,
+            normalization=self._normalization,
         )
         kwargs.update(overrides)
         # data/categorical are unchanged, so has_nan is already known --
@@ -494,6 +561,9 @@ class TrainingImage:
     penalty_matrix : :class:`numpy.ndarray` or None, optional
         Per-category mismatch penalty matrix (univariate TIs only; see
         :class:`Variable`). Default: ``None`` (binary mismatch).
+    normalization : :class:`str`, optional
+        Continuous-distance normalizer (univariate TIs only; see
+        :class:`Variable`): ``"range"`` (default) or ``"iqr"``.
     """
 
     def __init__(
@@ -507,6 +577,7 @@ class TrainingImage:
         penalty_matrix=_SENTINEL,
         distance_power=_SENTINEL,
         cond_weight=_SENTINEL,
+        normalization=_SENTINEL,
     ):
         sugar_kwargs = {
             "categorical": categorical,
@@ -516,6 +587,7 @@ class TrainingImage:
             "penalty_matrix": penalty_matrix,
             "distance_power": distance_power,
             "cond_weight": cond_weight,
+            "normalization": normalization,
         }
         explicitly_given = sorted(
             k for k, v in sugar_kwargs.items() if v is not _SENTINEL
@@ -567,6 +639,9 @@ class TrainingImage:
                     0.0 if distance_power is _SENTINEL else distance_power
                 ),
                 cond_weight=1.0 if cond_weight is _SENTINEL else cond_weight,
+                normalization=(
+                    "range" if normalization is _SENTINEL else normalization
+                ),
             )
             self._multivariate = False
             self._variables = [var]

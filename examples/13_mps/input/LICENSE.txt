@@ -1,0 +1,138 @@
+Bundled MPS input data
+======================
+
+This directory contains small input arrays used by the MPS documentation
+examples. They are bundled so the Sphinx-Gallery build can run without network
+downloads or expensive training-image preparation steps.
+
+Third-party inputs
+------------------
+
+strebelle_channel_ti.npz
+    Source: GeoDataSets by Michael Pyrcz (GeostatsGuy)
+    https://github.com/GeostatsGuy/GeoDataSets
+
+    Upstream file:
+    MPS_Training_image_and_Realizations_500.npz
+
+    License: MIT. The local copy of the GeoDataSets MIT license is stored in
+    GEODATASETS-MIT.txt.
+
+    Citation: Strebelle, S. (2002), "Conditional simulation of complex
+    geological structures using multiple-point statistics", Mathematical
+    Geology, 34(1), 1-21, https://doi.org/10.1023/A:1014009426274.
+
+    Preparation: copied into this directory as an offline documentation asset.
+    The examples use the ``array1`` channel training image.
+
+strebelle_facies_resistivity_ti.npz
+    Source: derived from strebelle_channel_ti.npz.
+
+    License: MIT, inherited from the bundled GeoDataSets/Strebelle input above.
+
+    Preparation: contains a 250x250 Strebelle facies subset and a continuous
+    secondary variable prepared by smoothing the facies field and adding seeded
+    uniform noise.
+
+gaia_unil_stone_texture.npz
+    Source: stone.tiff from the GAIA-UNIL TrainingImagesTIFF repository
+    https://github.com/GAIA-UNIL/TrainingImagesTIFF
+
+    The TIFF repository states that the images were converted from the
+    GAIA-UNIL trainingimages repository:
+    https://github.com/GAIA-UNIL/trainingimages
+
+    License: GPL-3.0. The local copy of the GPL-3.0 license text is stored in
+    GAIA-UNIL-GPL-3.0.txt.
+
+    Preparation: converted from TIFF into a 200x200 floating-point NumPy array
+    for offline documentation use.
+
+Generated documentation inputs
+------------------------------
+
+synthetic_channel_context_ti.npz
+    License: GSTools documentation/example license.
+
+    Preparation: generated as a 250x250 input from deterministic formulas for
+    a categorical channel field and a continuous context field. The context
+    variable is the normalized x-coordinate.
+
+synthetic_variation_ti.npz
+    License: GSTools documentation/example license.
+
+    Preparation: generated once as a 250x250 continuous multi-Gaussian field with
+    anisotropic spatial correlation, using an exponential covariance model with
+    ``len_scale=[35, 25]`` and ``seed=123``.
+
+synthetic_3d_channel_ti.npz
+    License: GSTools documentation/example license.
+
+    Preparation: generated once from deterministic smooth surfaces so the
+    categorical TI contains connected 3D channel structures.
+
+herten_3d_ti.npz, herten_3d_reference_stats.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015),
+    Herten aquifer analog, unconditional 3D facies realizations (PANGAEA,
+    https://doi.org/10.1594/PANGAEA.844167) and the Scientific Data paper
+    https://doi.org/10.1038/sdata.2015.33. The realizations were generated
+    with the MPS code impala from 2D outcrop faces; they are not field
+    measurements.
+
+    The TI is realization sim_066 sub-sampled to every 4th cell (0.2 m). The
+    reference statistics are percentiles over 99 windows (8 x 5 x 7 m) of the
+    other realizations. License: CC-BY (PANGAEA record: CC-BY 3.0; paper:
+    CC-BY 4.0); attribution is required.
+
+herten_2d_extension.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015), Herten
+    aquifer analog (PANGAEA, https://doi.org/10.1594/PANGAEA.844167), model
+    realizations generated with the MPS code impala (not field measurements).
+    TI: x-z slice of sim-unc realization sim_066 (y = 5 m, 0.1 m cells).
+    Reference: slice of the 50 m realization sim-big (y = 25 m, x = 1-49 m).
+    Bands: 50 slices of sim-big. License: CC-BY; attribution is required.
+
+herten_s1_s6_sections.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015), Herten
+    aquifer analog (PANGAEA, https://doi.org/10.1594/PANGAEA.844167), the six
+    digitized outcrop sections S1-S6 (320 x 140 cells of 0.05 m, facies codes
+    0-9), stored unchanged as int8. License: CC-BY; attribution is required.
+
+herten_s1_section.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015), Herten
+    aquifer analog, outcrop section 1 (mapped facies, 16 m x 7 m, 5 cm cells;
+    PANGAEA, https://doi.org/10.1594/PANGAEA.844167). This is the interpreted
+    outcrop map, not a model realization. License: CC-BY (PANGAEA record:
+    CC-BY 3.0); attribution is required.
+
+herten_2d_sections.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015), Herten
+    aquifer analog (PANGAEA, https://doi.org/10.1594/PANGAEA.844167), the
+    outcrop sections section1.vtk and section4.vtk (320 x 140 cells of 0.05 m,
+    10 facies, stored as int8 arrays ``s1`` and ``s4``). Used by
+    20_multivariate_joint_and_secondary.py. License: CC-BY; attribution is
+    required.
+
+herten_zonation_sections.npz
+    Source: Bayer, P., Comunian, A., Hoyng, D., Mariethoz, G. (2015), Herten
+    aquifer analog, facies maps of the outcrop sections (PANGAEA,
+    https://doi.org/10.1594/PANGAEA.844167; the scientific data paper is
+    https://doi.org/10.1038/sdata.2015.33). Keys s1, s3, s5 are three of the
+    six digitized 2D x-z sections (320 x 140 cells, 0.05 m, facies 0-9, 16 x 7
+    m), stored unchanged as uint8. They are interpreted outcrop faces, not
+    simulations. License: CC-BY (PANGAEA record: CC-BY 3.0; paper: CC-BY 4.0);
+    attribution is required.
+
+sentinel2_leipzig_gap_filling.npz
+    Source: Sentinel-2 L2A scenes S2B_32UQB_20240813_0_L2A (2024-08-13, target)
+    and S2A_32UQB_20240828_0_L2A (2024-08-28, auxiliary date), bands B04 red and
+    B08 near-infrared, 10 m, digital numbers as uint16 (keys red, nir and
+    aux_red, aux_nir), and the Copernicus DEM GLO-30 resampled bilinearly to the
+    same 10 m grid (float32, m; key dem). One 300 x 300 pixel window of farmland
+    and lakes south of Leipzig near lon 12.3, lat 51.19 (rows 0-300, columns
+    20-320 of a 1000 x 1000 crop); no other change. Used by
+    22_satellite_gap_filling_leipzig.py. Attribution: Contains modified
+    Copernicus Sentinel data 2024 (ESA), via AWS Earth Search; Copernicus DEM
+    GLO-30 (c) DLR e.V. 2010-2014 and (c) Airbus Defence and Space GmbH
+    2014-2018 provided under COPERNICUS by the European Union and ESA.
+    Licence: free, full and open access under the Copernicus data terms.

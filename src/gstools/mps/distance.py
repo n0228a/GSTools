@@ -155,9 +155,18 @@ def vec_categorical_dist(
         Distance in [0, 1] for each candidate.
     """
     if not has_nan:
-        # ``np.dot`` upcasts the boolean mismatch mask to float64 internally, so
-        # an explicit ``.astype`` only adds a second (max_scan, n) temporary.
-        return np.dot(data_event_sim != all_de_ti, node_weights)
+        # NumPy's own pairwise-sum reduction (``.sum(axis=1)``), *not*
+        # ``np.dot`` (BLAS gemv): BLAS accumulation order is vendor-specific
+        # and, being non-associative in floating point, is not guaranteed
+        # bit-identical to the Rust kernel's accumulation for every input —
+        # only invisible until a genuine near-tie in the underlying discrete
+        # mismatch count flips the DS/DSBC winner (see mps-rust-integration
+        # n_neighbors=30 boundary-conditioning divergence). ``.sum(axis=1)``
+        # uses NumPy's documented, BLAS-independent pairwise algorithm, which
+        # the Rust kernel now replicates exactly.
+        return (
+            node_weights[np.newaxis, :] * (data_event_sim != all_de_ti)
+        ).sum(axis=1)
     _, we, wsum = _masked_weights(all_de_ti, node_weights)
     # NaN positions compare unequal, but ``we`` is zero there so they do not
     # contribute to the mismatch sum.

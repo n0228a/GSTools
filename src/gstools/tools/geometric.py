@@ -388,7 +388,7 @@ def matrix_isotropify(dim, anis):
             Stretching matrix.
     """
     anis = set_anis(dim, anis)
-    return matrix_scale(dim, np.concatenate(([1.0], 1.0 / anis)))
+    return np.diag(np.concatenate(([1.0], 1.0 / anis)))
 
 
 def matrix_anisotropify(dim, anis):
@@ -407,7 +407,7 @@ def matrix_anisotropify(dim, anis):
             Stretching matrix.
     """
     anis = set_anis(dim, anis)
-    return matrix_scale(dim, np.concatenate(([1.0], anis)))
+    return np.diag(np.concatenate(([1.0], anis)))
 
 
 def matrix_isometrize(dim, angles, anis):
@@ -427,8 +427,9 @@ def matrix_isometrize(dim, angles, anis):
         :class:`numpy.ndarray`
             Transformation matrix.
     """
-    anis = set_anis(dim, anis)
-    return matrix_detransform(dim, angles, np.concatenate(([1.0], anis)))
+    return np.matmul(
+        matrix_isotropify(dim, anis), matrix_derotate(dim, angles)
+    )
 
 
 def matrix_anisometrize(dim, angles, anis):
@@ -448,8 +449,9 @@ def matrix_anisometrize(dim, angles, anis):
         :class:`numpy.ndarray`
             Transformation matrix.
     """
-    anis = set_anis(dim, anis)
-    return matrix_transform(dim, angles, np.concatenate(([1.0], anis)))
+    return np.matmul(
+        matrix_rotate(dim, angles), matrix_anisotropify(dim, anis)
+    )
 
 
 def rotated_main_axes(dim, angles):

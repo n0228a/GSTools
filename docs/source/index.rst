@@ -132,6 +132,19 @@ Once the package GSTools-Core is available on your machine, it will be used by d
 In case you want to switch back to the Cython implementation, you can set
 :code:`gstools.config.USE_GSTOOLS_CORE=False` in your code. This also works at runtime.
 
+For Multiple Point Statistics Direct Sampling, the same switch selects the
+complete pure-Python numerical engine. During the Rust transition this mode is
+kept deliberately for reproducibility checks and Python-versus-Rust
+benchmarks::
+
+    import gstools as gs
+
+    gs.config.USE_GSTOOLS_CORE = False  # pure-Python MPS reference
+
+Set the flag before running the simulation. A compatible GSTools-Core is used
+by default when the flag is :code:`True`. Progress callbacks currently retain
+the Python scheduler, even when the core is enabled.
+
 GSTools-Core will automatically run in parallel, without having to provide OpenMP or a local C compiler.
 
 

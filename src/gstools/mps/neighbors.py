@@ -8,7 +8,7 @@ import warnings
 
 import numpy as np
 
-from gstools.tools.geometric import matrix_detransform, no_of_angles
+from gstools.tools.geometric import rotation_planes
 
 
 def _precompute_offsets(shape, max_offset=None):
@@ -359,11 +359,51 @@ def _lag_transform_matrix(dim, rotation_map, scale_map, x_i):
         relative to the TI, so lags are pulled back by the inverse). Lags are
         row vectors, applied as ``lags_ti = lags_sg @ M.T``.
     """
-    idx = tuple(int(c) for c in x_i)
-    angles = (
-        rotation_map[idx]
-        if rotation_map is not None
-        else np.zeros(no_of_angles(dim))
-    )
-    scale = scale_map[idx] if scale_map is not None else np.ones(dim)
-    return matrix_detransform(dim, angles, scale)
+    nodes = np.asarray(x_i, dtype=np.int64)[np.newaxis]
+    return _lag_transform_matrices(dim, rotation_map, scale_map, nodes)[0]
+
+
+def _lag_transform_matrices(dim, rotation_map, scale_map, nodes):
+    """Batched :func:`_lag_transform_matrix` for many nodes at once.
+
+    Same Givens order as :func:`gstools.tools.geometric.matrix_detransform`.
+
+    Parameters
+    ----------
+    dim : int
+        Spatial dimensionality of the simulation grid.
+    rotation_map : numpy.ndarray or None
+        Canonical rotation map, shape ``grid_shape + (no_of_angles(dim),)``.
+    scale_map : numpy.ndarray or None
+        Canonical scale map, shape ``grid_shape + (dim,)``.
+    nodes : numpy.ndarray, shape (N, dim)
+        Integer grid coordinates of the nodes.
+
+    Returns
+    -------
+    M : numpy.ndarray, shape (N, dim, dim)
+        One SG→TI detransform matrix per node.
+    """
+    idx = tuple(np.asarray(nodes, dtype=np.int64).T)
+    n = len(nodes)
+    eye = np.broadcast_to(np.eye(dim), (n, dim, dim))
+    mat = eye.copy()
+    if rotation_map is not None:
+        angles = -np.asarray(rotation_map[idx], dtype=np.double)
+        for i, (p, q) in enumerate(rotation_planes(dim)):
+            # alternating signs to match tait-bryan, as in matrix_derotate
+            ang = (-1) ** i * angles[:, i]
+            givens = eye.copy()
+            givens[:, p, p] = np.cos(ang)
+            givens[:, q, q] = np.cos(ang)
+            givens[:, p, q] = -np.sin(ang)
+            givens[:, q, p] = np.sin(ang)
+            mat = np.matmul(mat, givens)
+    if scale_map is not None:
+        mat = (
+            mat
+            * (1.0 / np.asarray(scale_map[idx], dtype=np.double))[
+                :, :, np.newaxis
+            ]
+        )
+    return mat

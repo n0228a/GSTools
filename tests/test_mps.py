@@ -21,6 +21,7 @@ from gstools.mps.distance import (
 )
 from gstools.mps.model import MPSModel
 from gstools.mps.neighbors import (
+    _lag_transform_matrices,
     _lag_transform_matrix,
     _precompute_offsets,
     _reduce_to_fit,
@@ -380,6 +381,131 @@ class TestVariable(unittest.TestCase):
         v = Variable("x", np.zeros(4), max_radius=10.0)
         with self.assertRaises(AttributeError):
             v.max_radius = 20.0
+
+
+class TestNormalization(unittest.TestCase):
+    """Opt-in IQR normalization for continuous d_max (default stays 'range')."""
+
+    def setUp(self):
+        # Nine "normal" values plus one extreme outlier.
+        self.data = np.array(
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 100.0]
+        )
+
+    def test_default_normalization_is_range(self):
+        v = Variable("x", self.data, categorical=False, distance="l1")
+        self.assertEqual(v.normalization, "range")
+        self.assertAlmostEqual(v.d_max, 99.0)
+
+    def test_iqr_less_sensitive_to_outlier_than_range(self):
+        v_range = Variable(
+            "x",
+            self.data,
+            categorical=False,
+            distance="l1",
+            normalization="range",
+        )
+        v_iqr = Variable(
+            "x",
+            self.data,
+            categorical=False,
+            distance="l1",
+            normalization="iqr",
+        )
+        self.assertAlmostEqual(v_range.d_max, 99.0)
+        # IQR of nine 1.0's and one 100.0 is 0 -> degenerate fallback to 1.0.
+        self.assertAlmostEqual(v_iqr.d_max, 1.0)
+        self.assertLess(v_iqr.d_max, v_range.d_max)
+
+    def test_iqr_changes_resulting_distance(self):
+        # Same TI, same query; only the normalizer differs -> different
+        # normalized distance for a bulk (non-outlier) mismatch.
+        de_sim = np.array([1.0])
+        de_ti = np.array([2.0])
+        v_range = Variable(
+            "x",
+            self.data,
+            categorical=False,
+            distance="l1",
+            normalization="range",
+        )
+        v_iqr = Variable(
+            "x",
+            self.data,
+            categorical=False,
+            distance="l1",
+            normalization="iqr",
+        )
+        ti_range = TrainingImage(v_range)
+        ti_iqr = TrainingImage(v_iqr.replace())
+        d_range = ti_range.vec_distance_var(
+            "x", de_sim, de_ti.reshape(1, -1), d_max=v_range.d_max
+        )[0]
+        d_iqr = ti_iqr.vec_distance_var(
+            "x", de_sim, de_ti.reshape(1, -1), d_max=v_iqr.d_max
+        )[0]
+        self.assertGreater(d_iqr, d_range)
+
+    def test_iqr_degenerate_fallback_no_nan(self):
+        # Mostly-constant array: too few distinct values for a meaningful IQR.
+        const_data = np.full(20, 3.0)
+        v = Variable(
+            "x",
+            const_data,
+            categorical=False,
+            distance="l1",
+            normalization="iqr",
+        )
+        self.assertTrue(np.isfinite(v.d_max))
+        self.assertAlmostEqual(v.d_max, 1.0)
+
+    def test_randpair_equals_expected_pair_distance(self):
+        # Exact closed forms: Gini mean difference for l1, sqrt(2 s^2) for l2.
+        x = np.array([1.0, 2.0, 4.0, 8.0, 16.0])
+        d = np.abs(x[:, None] - x[None, :])
+        iu = np.triu_indices(len(x), 1)
+        for dist, p_norm in (("l1", 1), ("l2", 2)):
+            v = Variable(
+                "x", x, categorical=False, distance=dist,
+                normalization="randpair",
+            )
+            expect = float(np.mean(d[iu] ** p_norm) ** (1.0 / p_norm))
+            self.assertAlmostEqual(v.d_max, expect, places=12)
+
+    def test_randpair_equalizes_effective_weight(self):
+        # Two variables on very different scales: under "randpair" each has
+        # E[distance] ~ 1, so equal nominal weights carry equal influence.
+        rng = np.random.default_rng(4)
+        a = rng.gamma(2.0, 1.0, size=4000)
+        b = rng.gamma(2.0, 1.0, size=4000) * 50.0
+        va = Variable("a", a, categorical=False, distance="l1",
+                      normalization="randpair")
+        vb = Variable("b", b, categorical=False, distance="l1",
+                      normalization="randpair")
+        for v, raw in ((va, a), (vb, b)):
+            iu = np.triu_indices(400, 1)
+            d = np.abs(raw[:400, None] - raw[None, :400])
+            self.assertAlmostEqual(np.mean(d[iu]) / v.d_max, 1.0, places=1)
+
+    def test_invalid_normalization_raises(self):
+        with self.assertRaisesRegex(ValueError, "normalization"):
+            Variable("x", self.data, categorical=False, normalization="zscore")
+
+    def test_normalization_ignored_for_categorical(self):
+        v = Variable(
+            "x",
+            np.array([0, 1, 0, 1]),
+            categorical=True,
+            normalization="iqr",
+        )
+        self.assertIsNone(v.d_max)
+        self.assertEqual(v.normalization, "iqr")
+
+    def test_replace_preserves_normalization(self):
+        v = Variable("x", self.data, categorical=False, normalization="iqr")
+        v2 = v.replace(n_neighbors=5)
+        self.assertEqual(v2.normalization, "iqr")
+        self.assertAlmostEqual(v2.d_max, v.d_max)
 
 
 class TestTrainingImage(unittest.TestCase):
@@ -2319,6 +2445,22 @@ class TestLagTransformMatrix(unittest.TestCase):
         np.testing.assert_array_equal(
             M, matrix_detransform(2, [np.pi / 6], [1.0, 1.0])
         )
+
+    def test_batched_matches_detransform(self):
+        from gstools.tools.geometric import matrix_detransform
+
+        rng = np.random.default_rng(0)
+        for shape in ((7,), (5, 4), (4, 3, 3)):
+            dim = len(shape)
+            rot = rng.uniform(-3, 3, shape + (dim * (dim - 1) // 2,))
+            scale = rng.uniform(0.3, 2.5, shape + (dim,))
+            nodes = np.argwhere(np.ones(shape, bool))
+            M = _lag_transform_matrices(dim, rot, scale, nodes)
+            ref = [
+                matrix_detransform(dim, rot[tuple(n)], scale[tuple(n)])
+                for n in nodes
+            ]
+            np.testing.assert_array_equal(M, np.stack(ref))
 
     def test_per_node_map_indexed_at_node(self):
         rot_map = np.zeros((4, 4, 1))

@@ -1,12 +1,14 @@
 """Direct Sampling simulation engine.
 
 `ds_simulate` is the entry point; `_DirectSamplingEngine` holds one run's
-state (output grids, informed masks, config) explicitly. The engine
-orchestrates per-node simulation by calling the stateless `neighbors`,
-`scan`, and `runner` modules.
+state (output grids, informed masks, config) explicitly — what used to be
+captured by closures inside `ds_simulate`. A current Rust backend executes the
+complete node path in one call; the Python engine retains the stateless
+`neighbors`, `scan`, and `runner` route as the compatibility fallback.
 """
 
 import dataclasses
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from math import prod
@@ -14,8 +16,10 @@ from math import prod
 import numpy as np
 
 from gstools import config
+from gstools.mps import scan as _scan_mod
 from gstools.mps.data_event import DataEvent
 from gstools.mps.neighbors import (
+    _lag_transform_matrices,
     _lag_transform_matrix,
     _precompute_offsets,
     _reduce_to_fit,
@@ -90,6 +94,30 @@ class _Domain:
     has_nan: bool
     finite_flat: object  # ndarray or None
     scan_config: object  # _ScanConfig
+
+
+if config._GSTOOLS_CORE_AVAIL:  # pragma: no cover
+    import gstools_core as _gstools_core
+
+    _mps_simulate_gsc = getattr(_gstools_core, "mps_simulate", None)
+else:  # pragma: no cover
+    _mps_simulate_gsc = None
+
+# Action Plan 7 measured policy. Intended as the default once the installed
+# gstools_core build's mps_simulate ABI is confirmed compatible with the
+# per-variable distance_power/cond_weight arguments below (see
+# tests/test_mps_rust_backend.py, which itself only opts in explicitly via
+# _MPS_RUST_ENGINE_FORCE for its dedicated Action Plan 7 cases). Left
+# disabled by default until that is verified against a specific core build;
+# progress callbacks, disabled/absent cores, older cores, zoning, post-
+# processing, and "random" scan order always retain the Python engine
+# regardless of this flag. DSBC (threshold=None) is wired through as a
+# nonpositive-threshold sentinel.
+_MPS_RUST_ENGINE_ENABLED = False
+_MPS_RUST_ENGINE_FORCE = False
+# Private instrumentation hook used by the reproducibility/benchmark harness.
+# Production callers leave this as ``None``.
+_MPS_RUST_ENGINE_STATS_HOOK = None
 
 
 def _build_path(unknown, path, rng_path, sim_shape):
@@ -379,6 +407,21 @@ class _DirectSamplingEngine:
         post_cond_weight = {
             v.name: v.cond_weight for v in self._post_ti.variables
         }
+        # Kernel-selection fields must also come from `_post_ti`, like
+        # vec_distance_var/distance_power/cond_weight above -- otherwise a
+        # Rust-dispatched post-pass would keep dispatching on the main
+        # pass's (stale) categorical/p_norm/penalty metadata even though
+        # post_processing_variables changed the actual kernel.
+        post_var_categorical = {
+            v.name: v.categorical for v in self._post_ti.variables
+        }
+        post_var_p_norm = {v.name: v.p_norm for v in self._post_ti.variables}
+        post_var_variation_p = {
+            v.name: v.variation_p_norm for v in self._post_ti.variables
+        }
+        post_var_penalty_matrix = {
+            v.name: v.penalty_matrix for v in self._post_ti.variables
+        }
         self._post_domains = [
             dataclasses.replace(
                 dom,
@@ -387,6 +430,10 @@ class _DirectSamplingEngine:
                     distance_power=post_distance_power,
                     cond_weight=post_cond_weight,
                     vec_distance_var=self._post_ti.vec_distance_var,
+                    var_categorical=post_var_categorical,
+                    var_p_norm=post_var_p_norm,
+                    var_variation_p=post_var_variation_p,
+                    var_penalty_matrix=post_var_penalty_matrix,
                 ),
             )
             for dom in self.domains
@@ -451,6 +498,36 @@ class _DirectSamplingEngine:
         cond_weight = {
             v.name: v.cond_weight for v in self.training_image.variables
         }
+
+        # Rust-dispatch fields. Kernel-selection fields (categorical/p_norm/
+        # variation_p) are search hyperparameters -- like distance_power/
+        # cond_weight/vec_distance_var above, they stay bound to the primary
+        # TI. Data-derived fields (has_nan, d_max, the flattened/stacked TI
+        # arrays and their row index) come from this domain's `ti`, like
+        # ti_vars/ti_flat/d_max already do -- correctness-critical for
+        # zoning, since a zone TI's own data (and value range) is what a
+        # Rust-dispatched scan of that zone must see.
+        var_categorical = {
+            v.name: v.categorical for v in self.training_image.variables
+        }
+        var_p_norm = {v.name: v.p_norm for v in self.training_image.variables}
+        var_variation_p = {
+            v.name: v.variation_p_norm for v in self.training_image.variables
+        }
+        var_penalty_matrix = {
+            v.name: v.penalty_matrix for v in self.training_image.variables
+        }
+        var_has_nan = {v.name: v.has_nan for v in ti.variables}
+        var_d_max = d_max
+        ti_flat_f64 = {
+            v.name: np.asarray(ti_flat[v.name], dtype=np.float64)
+            for v in ti.variables
+        }
+        var_index = {v.name: i for i, v in enumerate(ti.variables)}
+        ti_matrix_f64 = np.ascontiguousarray(
+            np.stack([ti_flat_f64[v.name] for v in ti.variables], axis=0)
+        )
+
         scan_config = _ScanConfig(
             variables=self.variables,
             weights=self.weights,
@@ -464,6 +541,15 @@ class _DirectSamplingEngine:
             vec_distance_var=self.training_image.vec_distance_var,
             d_max=d_max,
             ti_has_nan=has_nan,
+            var_has_nan=var_has_nan,
+            var_categorical=var_categorical,
+            var_p_norm=var_p_norm,
+            var_d_max=var_d_max,
+            ti_flat_f64=ti_flat_f64,
+            ti_matrix_f64=ti_matrix_f64,
+            var_index=var_index,
+            var_variation_p=var_variation_p,
+            var_penalty_matrix=var_penalty_matrix,
             scan_path=self.scan_path,
         )
         return _Domain(
@@ -803,6 +889,12 @@ class _DirectSamplingEngine:
             The current pass (main path or one post-processing round).
         """
         x_i_t = tuple(int(c) for c in x_i)
+        if _scan_mod._MPS_SCAN_TRACE is not None:
+            _scan_mod._MPS_SCAN_TRACE_NODES.append(x_i_t)
+        if _scan_mod._MPS_CORE_TRACE is not None:
+            _scan_mod._MPS_CORE_NODE = x_i_t
+        if _scan_mod._MPS_THRESHOLD_GRID is not None:
+            _scan_mod._MPS_CURRENT_NODE = x_i_t
         # Zonation selects WHICH search domain this node scans; the data
         # event is built from SG neighbours regardless of their zones,
         # which keeps zone boundaries coherent (spec §3 Mechanism).
@@ -842,12 +934,225 @@ class _DirectSamplingEngine:
             self.sg[v][node] = val
             self.informed[v][node] = True
 
+    def _run_rust_engine(
+        self,
+        n_threads,
+        order=None,
+        u_start=None,
+        u_fallback=None,
+        n_k=None,
+        scan_fraction=None,
+        scan_config=None,
+        post_pass=False,
+    ):
+        """Run one node path (main pass by default, or a post-pass round) in one GIL-free Rust call."""
+        order = self.path if order is None else order
+        u_start = self.u_start if u_start is None else u_start
+        u_fallback = self.u_fallback if u_fallback is None else u_fallback
+        n_k = self.n_k if n_k is None else n_k
+        scan_fraction = (
+            self.scan_fraction if scan_fraction is None else scan_fraction
+        )
+        if scan_config is None:
+            scan_config = self.domains[0].scan_config
+        fields = np.ascontiguousarray(
+            np.stack([self.sg[v].reshape(-1) for v in self.variables])
+        )
+        conditioned = np.ascontiguousarray(
+            np.stack(
+                [self.is_cond[v].reshape(-1) for v in self.variables]
+            ).astype(np.uint8)
+        )
+        metric_kinds = np.fromiter(
+            (
+                0
+                if scan_config.var_categorical[v]
+                else 1
+                if scan_config.var_p_norm[v] is not None
+                else 2
+                for v in self.variables
+            ),
+            dtype=np.int64,
+            count=len(self.variables),
+        )
+        p_norm = np.fromiter(
+            (
+                1.0
+                if scan_config.var_categorical[v]
+                else scan_config.var_p_norm[v]
+                if scan_config.var_p_norm[v] is not None
+                else scan_config.var_variation_p[v]
+                for v in self.variables
+            ),
+            dtype=np.float64,
+            count=len(self.variables),
+        )
+        lag_matrices = (
+            np.ascontiguousarray(
+                _lag_transform_matrices(
+                    self.dim, self.rotation_map, self.scale_map, order
+                )
+            )
+            if (self.rotation_map is not None or self.scale_map is not None)
+            and len(order)
+            else np.empty((0, self.dim, self.dim), dtype=np.float64)
+        )
+        (
+            result,
+            strict_fallbacks,
+            level_count,
+            max_ready_width,
+            used_threads,
+            collapsed_lags,
+        ) = _mps_simulate_gsc(
+            scan_config.ti_matrix_f64,
+            np.asarray(self.ti_shape, dtype=np.int64),
+            fields,
+            conditioned,
+            np.asarray(self.sim_shape, dtype=np.int64),
+            np.asarray(order, dtype=np.int64),
+            lag_matrices,
+            np.asarray(u_start, dtype=np.float64),
+            np.asarray(u_fallback, dtype=np.float64),
+            np.asarray(self.offset_arr, dtype=np.int64),
+            np.fromiter(
+                (n_k[v] for v in self.variables),
+                dtype=np.int64,
+                count=len(self.variables),
+            ),
+            np.fromiter(
+                (
+                    np.nan
+                    if self.max_radius_per_var[v] is None
+                    else self.max_radius_per_var[v]
+                    for v in self.variables
+                ),
+                dtype=np.float64,
+                count=len(self.variables),
+            ),
+            np.fromiter(
+                (self.weights[v] for v in self.variables),
+                dtype=np.float64,
+                count=len(self.variables),
+            ),
+            metric_kinds,
+            np.fromiter(
+                (scan_config.var_has_nan[v] for v in self.variables),
+                dtype=np.uint8,
+                count=len(self.variables),
+            ),
+            np.fromiter(
+                (
+                    1.0
+                    if scan_config.var_d_max[v] is None
+                    else scan_config.var_d_max[v]
+                    for v in self.variables
+                ),
+                dtype=np.float64,
+                count=len(self.variables),
+            ),
+            p_norm,
+            # DSBC sentinel: the Rust kernels read any nonpositive
+            # threshold as DSBC, and MPSModel validation rejects
+            # threshold <= 0 from users, so 0.0 is unambiguous.
+            0.0 if self.threshold is None else self.threshold,
+            scan_fraction,
+            np.fromiter(
+                (scan_config.distance_power[v] for v in self.variables),
+                dtype=np.float64,
+                count=len(self.variables),
+            ),
+            np.fromiter(
+                (scan_config.cond_weight[v] for v in self.variables),
+                dtype=np.float64,
+                count=len(self.variables),
+            ),
+            self.boundary == "partial",
+            n_threads,
+            post_pass,
+        )
+        for row, variable in enumerate(self.variables):
+            self.sg[variable][...] = result[row].reshape(self.sim_shape)
+            self.informed[variable][...] = ~np.isnan(self.sg[variable])
+        self._rust_engine_stats = {
+            "level_count": int(level_count),
+            "max_ready_width": int(max_ready_width),
+            "requested_threads": int(n_threads),
+            "used_threads": int(used_threads),
+        }
+        if _MPS_RUST_ENGINE_STATS_HOOK is not None:
+            _MPS_RUST_ENGINE_STATS_HOOK(self._rust_engine_stats.copy())
+        if strict_fallbacks:
+            warnings.warn(
+                "gstools.mps: boundary='strict' could not fit the full data "
+                "event inside the TI; falling back to partial mode (dropping "
+                "the furthest neighbour(s)). Ensure the TI is at least as "
+                "large as the data event extent to enforce strict mode.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        if collapsed_lags:
+            warnings.warn(
+                "gstools.mps: anisotropy/rotation transform collapsed "
+                "neighbour lag(s) onto duplicate TI positions; the "
+                "duplicates are excluded from the data event. Reduce the "
+                "anisotropy ratio or rotation to retain them.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return self.sg
+
+    def _has_penalty_matrix(self):
+        """Whether any variable of the main (or post-pass) scan config has a penalty matrix."""
+        configs = [self.domains[0].scan_config]
+        if self.post_processing > 0:
+            configs.append(self._post_domains[0].scan_config)
+        return any(
+            cfg.var_penalty_matrix[v] is not None
+            for cfg in configs
+            for v in self.variables
+        )
+
     def run(self, num_threads=None, progress=None):
         n_threads = (
             num_threads
             if num_threads is not None
             else (config.NUM_THREADS or 1)
         )
+        # The complete Rust call cannot currently invoke a Python callback per
+        # completed node. During the transition, requesting progress therefore
+        # selects the intact Python scheduler rather than silently dropping
+        # callback events.
+        use_rust_engine = (
+            (_MPS_RUST_ENGINE_ENABLED or _MPS_RUST_ENGINE_FORCE)
+            and config.USE_GSTOOLS_CORE
+            and config._GSTOOLS_CORE_AVAIL
+            and _mps_simulate_gsc is not None
+            and not progress
+            # The complete Rust call has no notion of per-node domain
+            # selection; only the single-domain case is wired to it.
+            and self.zone_selector is None
+            # Penalty-matrix distances are not implemented in the Rust engine.
+            and not self._has_penalty_matrix()
+            # The complete Rust call's node loop hardcodes a sequential walk;
+            # random-order scanning is wired only through the per-node kernels
+            # (mps/scan.py), so scan_path="random" must stay on that path.
+            and self.scan_path == "sequential"
+        )
+        if use_rust_engine:
+            self._run_rust_engine(n_threads)
+            for order, u_st, u_fb, n_k, sf in self._post_pass_specs():
+                self._run_rust_engine(
+                    n_threads,
+                    order=order,
+                    u_start=u_st,
+                    u_fallback=u_fb,
+                    n_k=n_k,
+                    scan_fraction=sf,
+                    scan_config=self._post_domains[0].scan_config,
+                    post_pass=True,
+                )
+            return self.sg
         executor = (
             ThreadPoolExecutor(max_workers=n_threads)
             if n_threads > 1
@@ -951,22 +1256,8 @@ class _DirectSamplingEngine:
                 self.informed[v][x_t] = False
         return self._simulate_node(pss, i, x_i, u_start_i, u_fallback_i)
 
-    def _run_post_passes(self, progress=None, executor=None):
-        """Post-processing (Meerschman2013 §4 / CASE 3).
-
-        Re-simulates every node with >= 1 non-conditioned variable against a
-        **fully informed** neighbourhood: the pass-scoped all-``-1`` vmap makes
-        every informed cell available, so unlike the main path a node also sees
-        cells it *precedes* in the visit order and reads their
-        not-yet-re-simulated values — that is what refines the existing
-        realization instead of redrawing it.  ``pos_map`` then gives
-        :func:`runner._build_dag_base` the ordering its vmap no longer carries,
-        so the DAG encodes the Gauss–Seidel dependency in both directions and
-        each pass parallelizes while staying bit-identical to serial.
-
-        ``scan_fraction`` and ``n_neighbors`` are divided by
-        ``post_processing_factor`` (Me13 §4) into a per-round ``_Pass``.
-        """
+    def _post_pass_specs(self):
+        """Yield ``(order, u_start, u_fallback, n_k, scan_fraction)`` per post round, drawing the RNGs in order."""
         if self.post_processing <= 0:
             return
         resim = np.zeros(self.sim_shape, dtype=bool)
@@ -986,13 +1277,6 @@ class _DirectSamplingEngine:
             v: max(1, int(round(n / p_f))) for v, n in post_n_k.items()
         }
         pass_scan_fraction = self.scan_fraction / p_f
-        sg_size = int(np.prod(self.sim_shape))
-        # Round-invariant (no order-dependence): every cell is available
-        # regardless of visit position, so build it once and reuse.
-        pass_vmap = {
-            v: np.full(sg_size, -1, dtype=np.intp) for v in self.variables
-        }
-
         for _ in range(self.post_processing):
             if isinstance(self._post_path, str) and self._post_path == "same":
                 # Without a post_processing_mask, resim is exactly the main
@@ -1007,19 +1291,50 @@ class _DirectSamplingEngine:
                 order = _build_path(
                     resim, self._post_path, self._rng_path, self.sim_shape
                 )
+            yield (
+                order,
+                self._rng_nodes.uniform(size=len(order)),
+                self._rng_nodes.uniform(size=(len(order), self.dim)),
+                pass_n_k,
+                pass_scan_fraction,
+            )
+
+    def _run_post_passes(self, progress=None, executor=None):
+        """Post-processing (Meerschman2013 §4 / CASE 3).
+
+        Re-simulates every node with >= 1 non-conditioned variable against a
+        **fully informed** neighbourhood: the pass-scoped all-``-1`` vmap makes
+        every informed cell available, so unlike the main path a node also sees
+        cells it *precedes* in the visit order and reads their
+        not-yet-re-simulated values — that is what refines the existing
+        realization instead of redrawing it.  ``pos_map`` then gives
+        :func:`runner._build_dag_base` the ordering its vmap no longer carries,
+        so the DAG encodes the Gauss–Seidel dependency in both directions and
+        each pass parallelizes while staying bit-identical to serial.
+
+        ``scan_fraction`` and ``n_neighbors`` are divided by
+        ``post_processing_factor`` (Me13 §4) into a per-round ``_Pass``.
+        """
+        sg_size = int(np.prod(self.sim_shape))
+        # Round-invariant (no order-dependence): every cell is available
+        # regardless of visit position, so build it once and reuse.
+        pass_vmap = {
+            v: np.full(sg_size, -1, dtype=np.intp) for v in self.variables
+        }
+        for order, u_st, u_fb, n_k, sf in self._post_pass_specs():
             pss = _Pass(
                 order=order,
                 vmap=pass_vmap,
                 pos_map=_order_positions(order, self.sim_shape),
-                n_k=pass_n_k,
-                scan_fraction=pass_scan_fraction,
+                n_k=n_k,
+                scan_fraction=sf,
                 neighbor_cache={},
                 domains=self._post_domains,
             )
             self._dispatch_pass(
                 pss,
-                self._rng_nodes.uniform(size=len(order)),
-                self._rng_nodes.uniform(size=(len(order), self.dim)),
+                u_st,
+                u_fb,
                 self._reopen_and_simulate,
                 executor,
                 progress,

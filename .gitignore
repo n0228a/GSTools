@@ -41,6 +41,10 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+.asv/*
+.asv-openmp/*
+.asv-ci/*
+asv.ci.*.json
 nosetests.xml
 coverage.xml
 *.cover
@@ -128,3 +132,8 @@ docs/source/sg_execution_times.rst
 *.vtu
 *.vtr
 *.vtk
+
+*.npz
+!examples/13_mps/input/
+!examples/13_mps/input/*.npz
+!examples/13_mps/input/*.txt

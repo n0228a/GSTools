@@ -22,7 +22,9 @@
 # import os
 # import sys
 import datetime
+import shutil
 import warnings
+from pathlib import Path
 
 warnings.filterwarnings(
     "ignore",
@@ -36,6 +38,59 @@ warnings.filterwarnings(
 from gstools import __version__ as ver
 
 
+def _mps_assets(subdir, suffixes):
+    """Return bundled MPS assets that should travel with examples."""
+    asset_dir = (
+        Path(__file__).resolve().parents[2] / "examples" / "13_mps" / subdir
+    )
+    if not asset_dir.exists():
+        return []
+    return sorted(
+        path
+        for path in asset_dir.iterdir()
+        if path.is_file() and path.suffix in suffixes
+    )
+
+
+def _patch_mps_gallery_zipfiles():
+    """Include bundled MPS assets in per-example Sphinx-Gallery zip files."""
+    try:
+        from sphinx_gallery import gen_rst
+    except Exception:
+        return
+
+    original_zip_files = gen_rst.zip_files
+    if getattr(original_zip_files, "_gstools_mps_inputs", False):
+        return
+
+    def zip_files_with_mps_inputs(file_list, zipname, relative_to, extension=None):
+        zip_path = Path(zipname)
+        relative_dir = Path(relative_to)
+
+        if (
+            extension is None
+            and zip_path.suffix == ".zip"
+            and relative_dir.name == "13_mps"
+        ):
+            copied_assets = []
+            for subdir, suffixes in {
+                "input": {".npz", ".txt"},
+                "output": {".png", ".txt"},
+            }.items():
+                target_asset_dir = relative_dir / subdir
+                target_asset_dir.mkdir(exist_ok=True)
+                for src in _mps_assets(subdir, suffixes):
+                    dst = target_asset_dir / src.name
+                    shutil.copy2(src, dst)
+                    copied_assets.append(str(dst))
+            file_list = [*file_list, *copied_assets]
+
+        return original_zip_files(file_list, zipname, relative_to, extension)
+
+    zip_files_with_mps_inputs._gstools_mps_inputs = True
+    gen_rst.zip_files = zip_files_with_mps_inputs
+
+
 def skip(app, what, name, obj, skip, options):
     if name in ["__call__"]:
         return False
@@ -44,6 +99,7 @@ def skip(app, what, name, obj, skip, options):
 
 def setup(app):
     app.connect("autodoc-skip-member", skip)
+    _patch_mps_gallery_zipfiles()
 
 
 # -- General configuration ------------------------------------------------
